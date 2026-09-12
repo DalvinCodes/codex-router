@@ -220,14 +220,17 @@ test("restart is skipped when no background service is installed", async () => {
 
 test("restart runs the service restart command when installed", async () => {
   const calls = [];
-  const spawn = (command, args) => {
-    calls.push(args.at(-1));
+  const spawn = (command, args, options) => {
+    calls.push({ action: args.at(-1), stdio: options.stdio });
     return args.at(-1) === "status"
       ? INSTALLED_STATUS
       : { status: 0, error: undefined, stdout: JSON.stringify({ state: "running" }) };
   };
   assert.equal(await restartRouterServiceIfInstalled({ spawn }), true);
-  assert.deepEqual(calls, ["status", "restart"]);
+  assert.deepEqual(calls, [
+    { action: "status", stdio: "capture" },
+    { action: "restart", stdio: "capture" },
+  ]);
 });
 
 test("status is separately capped while restart retains its contracted absolute deadline", async () => {

@@ -243,7 +243,11 @@ export async function restartRouterServiceIfInstalled({
     env,
     signal,
     deadline: operationDeadline,
-    stdio: "inherit",
+    // This helper is called inside JSON-returning mutation commands. The
+    // service child writes its own status document to stdout; inheriting that
+    // stream would prepend a second JSON document to the caller's response and
+    // make a successful Control Center mutation look like invalid JSON.
+    stdio: "capture",
   });
   assertOperationActive(signal, operationDeadline);
   if (result.error || result.status !== 0) {
