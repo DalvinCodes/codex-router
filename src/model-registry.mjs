@@ -19,6 +19,11 @@ import { instructionOverlayExists } from "./instruction-overlays.mjs";
 import { SOURCE_ROOT } from "./paths.mjs";
 import { officialModelDisplayName, readUserModels } from "./user-models.mjs";
 import { curatableRequestProfile, requestProfileKnown } from "./request-profiles.mjs";
+import {
+  materializeOpenRouterProviderVariant,
+  openRouterProviderVariantProblem,
+  readOpenRouterProviderVariants,
+} from "./openrouter-provider-variants.mjs";
 
 export const REGISTRY_PATH =
   process.env.MODEL_ROUTER_REGISTRY ||
@@ -601,6 +606,13 @@ function modelProblem(model, providers, slugs, gatewayModels) {
   if (!model.slug.startsWith(`${model.provider}/`)) {
     return `model ${model.slug} must be namespaced under ${model.provider}/`;
   }
+  if (model.openrouterRouting !== undefined) {
+    const routing = model.openrouterRouting;
+    const problem = openRouterProviderVariantProblem(routing);
+    if (model.provider !== "openrouter" || problem || routing.baseModel === model.slug) {
+      return `model ${model.slug} has invalid OpenRouter routing metadata`;
+    }
+  }
   if (provider.authMode === "anonymous" && !anonymousModelAllowed(provider, model.upstreamModel)) {
     return `anonymous provider ${provider.id} only accepts its documented free-model ids`;
   }
@@ -924,6 +936,10 @@ function mergeUserModels(base, staticAliases) {
       skip(model, `model ${model?.slug || "<unknown>"} may not declare multiAgentVersion v2`);
       continue;
     }
+    if (model?.openrouterRouting !== undefined) {
+      skip(model, `model ${model?.slug || "<unknown>"} may not declare generated OpenRouter routing metadata`);
+      continue;
+    }
     const checkedIn = checkedInRoutes.get(`${model?.provider}\0${model?.upstreamModel}`);
     if (checkedIn) {
       if (typeof model?.slug === "string" && model.slug && model.slug !== checkedIn.slug) {
@@ -985,6 +1001,53 @@ function mergeUserModels(base, staticAliases) {
   };
 }
 
+// Machine-local OpenRouter selections derive routes only after both trusted
+// checked-in models and validated user-curated models have settled. That lets
+// either kind be a base without putting generated routes into user-models.json
+// (where provider/upstream deduplication would correctly reject them).
+function mergeOpenRouterProviderVariants(base) {
+  const state = readOpenRouterProviderVariants();
+  const warnings = [...state.warnings];
+  const models = [...base.models];
+  const slugs = new Set(models.map((model) => model.slug));
+  const gatewayModels = new Set(models.map((model) => model.gatewayModel));
+  const baseBySlug = new Map(models.map((model) => [model.slug, model]));
+  for (const selection of state.variants) {
+    const baseModel = baseBySlug.get(selection.baseModel);
+    if (!baseModel) {
+      warnings.push(
+        `Inactive OpenRouter provider variant ${selection.baseModel} via ${selection.providerName}: base model is unavailable.`,
+      );
+      continue;
+    }
+    if (
+      baseModel.provider !== "openrouter" ||
+      providerModelEndpoint(base.providers.get(baseModel.provider)) !== "/chat/completions"
+    ) {
+      warnings.push(
+        `Inactive OpenRouter provider variant ${selection.baseModel} via ${selection.providerName}: base model is not an OpenRouter Chat Completions route.`,
+      );
+      continue;
+    }
+    try {
+      const variant = materializeOpenRouterProviderVariant(baseModel, selection);
+      const problem = modelProblem(variant, base.providers, slugs, gatewayModels);
+      if (problem) throw new Error(problem);
+      slugs.add(variant.slug);
+      gatewayModels.add(variant.gatewayModel);
+      models.push(variant);
+    } catch (error) {
+      warnings.push(
+        `Inactive OpenRouter provider variant ${selection.baseModel} via ${selection.providerName}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return {
+    models: Object.freeze(models),
+    warnings: Object.freeze(warnings),
+  };
+}
+
 const registry = loadRegistry();
 const staticAliases = validatedStaticModelSlugAliases(registry);
 const runtime = loadRuntimeProviders(registry.providers);
@@ -992,6 +1055,10 @@ const merged = mergeUserModels(
   { ...registry, providers: runtime.providers },
   staticAliases,
 );
+const withOpenRouterVariants = mergeOpenRouterProviderVariants({
+  models: merged.models,
+  providers: runtime.providers,
+});
 
 export const PROVIDERS = registry.providers;
 // Runtime routing and curation use this union. Keeping it separate from
@@ -1004,8 +1071,12 @@ export const RUNTIME_PROVIDER_WARNINGS = runtime.warnings;
 // bind to this set: a local overlay is useful routing configuration, but it
 // cannot certify itself for every installer.
 export const CHECKED_IN_MODELS = registry.models;
-export const MODELS = merged.models;
-export const USER_MODEL_WARNINGS = merged.warnings;
+export const MODELS = withOpenRouterVariants.models;
+export const OPENROUTER_PROVIDER_VARIANT_WARNINGS = withOpenRouterVariants.warnings;
+export const USER_MODEL_WARNINGS = Object.freeze([
+  ...merged.warnings,
+  ...withOpenRouterVariants.warnings,
+]);
 // Slug -> the reason that user model was left out of MODELS. A slug here may
 // still route through a curation alias; callers check MODEL_BY_SLUG first.
 export const USER_MODELS_SKIPPED = merged.skipped;

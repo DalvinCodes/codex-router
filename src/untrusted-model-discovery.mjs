@@ -265,7 +265,11 @@ export function validateModelCatalogPayload(payload, {
   return data;
 }
 
-export async function fetchUntrustedModelCatalog(endpoint, {
+// Shared, bounded JSON GET boundary for provider-owned discovery endpoints.
+// Model catalogs and OpenRouter endpoint inventories differ only in schema;
+// transport policy stays centralized here so neither caller can accidentally
+// weaken DNS pinning, redirect isolation, HTTPS requirements, or body limits.
+export async function fetchUntrustedJson(endpoint, {
   headers = {},
   fetchImpl = globalThis.fetch,
   timeoutMs = 30_000,
@@ -278,6 +282,7 @@ export async function fetchUntrustedModelCatalog(endpoint, {
   proxyResolvesDestination = fetchImpl === globalThis.fetch && environmentHttpProxyConfigured(),
   acceptNonOk = false,
   validatePayload = true,
+  payloadValidator,
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("Model discovery requires a fetch implementation.");
   const credentialBearing = credentialBearingHeaders(headers);
@@ -332,10 +337,21 @@ export async function fetchUntrustedModelCatalog(endpoint, {
       const contentType = responseHeader(response, "content-type");
       if (contentType && !/\bjson\b/i.test(contentType)) throw new Error("Provider model catalog did not return JSON.");
       try { payload = JSON.parse(body); } catch { throw new Error("Provider returned invalid JSON for its model catalog."); }
-      validateModelCatalogPayload(payload, { maxModels, maxRecordBytes });
+      if (typeof payloadValidator === "function") {
+        payloadValidator(payload, { maxModels, maxRecordBytes });
+      }
       return payload;
     }
   } finally {
     await closeDispatcher(dispatcher);
   }
+}
+
+export async function fetchUntrustedModelCatalog(endpoint, options = {}) {
+  return fetchUntrustedJson(endpoint, {
+    ...options,
+    payloadValidator: options.payloadValidator || ((payload, limits) => (
+      validateModelCatalogPayload(payload, limits)
+    )),
+  });
 }

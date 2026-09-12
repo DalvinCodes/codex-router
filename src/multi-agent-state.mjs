@@ -190,6 +190,35 @@ export function replaceMultiAgentState({ mode, enabled = [], disabled = [], effo
   return subagentSettingsSnapshot();
 }
 
+// A removed route must not leave operator enable/disable or reasoning choices
+// behind for a future model that happens to reuse the same slug.
+export function forgetMultiAgentModels(slugs) {
+  const forgotten = new Set(
+    (Array.isArray(slugs) ? slugs : [])
+      .map((slug) => String(slug || "").trim())
+      .filter(Boolean),
+  );
+  if (!forgotten.size) return subagentSettingsSnapshot();
+  const current = readMultiAgentSettings();
+  const efforts = Object.fromEntries(
+    Object.entries(subagentEfforts()).filter(([slug]) => !forgotten.has(slug)),
+  );
+  const next = {
+    version: 2,
+    mode: current.mode,
+    enabled: current.enabled.filter((slug) => !forgotten.has(String(slug))),
+    disabled: current.disabled.filter((slug) => !forgotten.has(String(slug))),
+    ...(Object.keys(efforts).length ? { efforts } : {}),
+  };
+  if (
+    next.enabled.length === current.enabled.length &&
+    next.disabled.length === current.disabled.length &&
+    Object.keys(efforts).length === Object.keys(subagentEfforts()).length
+  ) return subagentSettingsSnapshot();
+  writeSettings(next);
+  return subagentSettingsSnapshot();
+}
+
 // The three modes documented in `.claude/skills/codex-subagents/SKILL.md`:
 // `proven` ships only what the registry verified, `selected` adds the routes
 // the operator explicitly turned on, and `all` advertises every non-hidden

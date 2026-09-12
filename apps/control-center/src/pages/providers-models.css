@@ -652,6 +652,98 @@
   justify-self: start;
 }
 
+.pm-openrouter-providers {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px 14px 64px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-1) 62%, var(--surface-0));
+}
+
+.pm-openrouter-provider-head,
+.pm-openrouter-provider-actions,
+.pm-openrouter-provider-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.pm-openrouter-provider-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.pm-openrouter-provider-head strong {
+  color: var(--ink-strong);
+  font-size: 10.5px;
+  font-weight: 620;
+}
+
+.pm-openrouter-provider-head small,
+.pm-openrouter-provider-actions small,
+.pm-openrouter-provider-empty {
+  color: var(--ink-faint);
+  font-size: 8.5px;
+  line-height: 1.45;
+}
+
+.pm-openrouter-provider-loading {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.pm-openrouter-provider-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 7px;
+}
+
+.pm-openrouter-provider-option {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-0);
+  cursor: pointer;
+}
+
+.pm-openrouter-provider-option[data-withdrawn="true"] {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--line));
+}
+
+.pm-openrouter-provider-option input {
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.pm-openrouter-provider-option > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.pm-openrouter-provider-option strong {
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pm-openrouter-provider-option small,
+.pm-openrouter-provider-error span {
+  color: var(--ink-faint);
+  font-size: 8px;
+  line-height: 1.4;
+}
+
 /* The effort control, sized to its column so the row stays one line. */
 .pm-effort-menu-wrap {
   position: relative;

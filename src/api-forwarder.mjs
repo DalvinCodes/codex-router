@@ -87,6 +87,7 @@ import {
   endpointCapabilityError,
   supportsOpenAIModelEndpoint,
 } from "./openai-endpoint-policy.mjs";
+import { applyOpenRouterProviderRouting } from "./openrouter-routing.mjs";
 
 installStableFetchTransport();
 
@@ -714,6 +715,13 @@ function normalizeBody(buffer, contentType, route) {
   }
 
   payload.model = model.upstreamModel;
+  // A provider variant's picker identity is a deterministic routing promise:
+  // prefer this downstream OpenRouter brand and permit OpenRouter's normal
+  // fallback chain. Override any caller-supplied provider object only for that
+  // derived Chat Completions route. Automatic OpenRouter routes, every other
+  // credential provider, and non-chat surfaces remain byte-for-byte governed
+  // by their existing request behavior.
+  applyOpenRouterProviderRouting(payload, model, route);
   // Embeddings have their own wire contract. Keep every provider-specific
   // input field unchanged and never send the body through a chat adapter.
   if (route === "/embeddings") {

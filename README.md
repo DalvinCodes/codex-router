@@ -1022,6 +1022,33 @@ anything else their current account catalogs expose:
 | Venice | `venice` | `https://api.venice.ai/api/v1` | [venice.ai/settings/api](https://venice.ai/settings/api) |
 | Nous Research (Hermes) | `nousresearch` | `https://inference-api.nousresearch.com/v1` | [portal.nousresearch.com](https://portal.nousresearch.com) |
 
+### Prefer a downstream OpenRouter provider
+
+Every registered OpenRouter chat model keeps its normal **Automatic** route.
+Expand an OpenRouter model on the Control Center's **Models** page to load the
+providers currently advertised by OpenRouter, then check only the provider
+brands that should also appear in the Codex picker. A selected brand creates a
+separate route such as `OpenRouter → DeepInfra preferred`; requests on that
+route prefer the brand and allow OpenRouter to fall back when it is unavailable.
+
+The same workflow is available from the CLI:
+
+```sh
+./bin/control openrouter-providers list openrouter/deepseek-v4.1-flash --refresh
+./bin/control openrouter-providers set openrouter/deepseek-v4.1-flash deepinfra,together --apply
+./bin/control openrouter-providers set openrouter/deepseek-v4.1-flash none --apply
+```
+
+Saving always validates newly selected brands against a fresh endpoint
+inventory, republishes every installed client, and restarts the routing service
+as one rollback-protected transaction. The owner-private
+`openrouter-provider-variants.json` state stores only the base model and selected
+provider identities; it never stores credentials, endpoint URLs, pricing, or
+transient health data. If a selected brand disappears temporarily, its route
+remains available and is marked as no longer advertised so fallback can still
+work. If the base model disappears, the selection remains inactive with a
+diagnostic until the base returns or the selection is cleared.
+
 Venice API access is an entitlement, not just a key: a free Venice account has
 none. A Pro subscription (the low-rate-limit Explorer tier), a funded USD
 balance, or staked VVV that grants VCU is what makes the key usable, and the

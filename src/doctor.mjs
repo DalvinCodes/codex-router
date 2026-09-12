@@ -15,6 +15,7 @@ import { readNativeCatalogSource } from "./native-catalog-source.mjs";
 import {
   MODEL_BY_SLUG,
   MODELS,
+  OPENROUTER_PROVIDER_VARIANT_WARNINGS,
   PROVIDERS,
   providerNeedsNoKey,
   RUNTIME_PROVIDERS,
@@ -1041,6 +1042,15 @@ for (const warning of RUNTIME_PROVIDER_WARNINGS) {
     "Generic provider registry",
     warning,
     "Repair or remove the malformed generic provider descriptor, then rerun the doctor.",
+  );
+}
+
+for (const warning of OPENROUTER_PROVIDER_VARIANT_WARNINGS) {
+  add(
+    "warn",
+    "OpenRouter provider variants",
+    warning,
+    "Restore the base model or clear its saved provider variants with bin/control openrouter-providers set <model-slug> none --apply.",
   );
 }
 

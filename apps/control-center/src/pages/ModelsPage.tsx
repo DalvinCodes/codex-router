@@ -19,6 +19,7 @@ import { groupModelFamilies, preferredFamilyRoute } from "../model-families.mjs"
 import { useOptimisticValues, type RunAction } from "../useOptimisticValues";
 import type {
   ModelViewFocusRequest,
+  OpenRouterProviderDiscovery,
   ProviderCatalog,
   ProviderSetup,
   ProviderSetupSnapshot,
@@ -105,6 +106,13 @@ interface CatalogViewState {
   error?: string;
 }
 
+interface OpenRouterProviderViewState {
+  status: "idle" | "loading" | "ready" | "error";
+  refreshing: boolean;
+  data?: OpenRouterProviderDiscovery;
+  error?: string;
+}
+
 function catalogEligible(entry: ProviderDirectoryEntry): boolean {
   return Boolean(entry.setup?.configured && entry.setup.catalogSources?.length);
 }
@@ -162,6 +170,9 @@ export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dat
   const [removeProvider, setRemoveProvider] = useState<ProviderSetup | null>(null);
   const [catalogStates, setCatalogStates] = useState<Record<string, CatalogViewState>>({});
   const catalogRequestGenerations = useRef<Record<string, number>>({});
+  const [openRouterProviderStates, setOpenRouterProviderStates] = useState<Record<string, OpenRouterProviderViewState>>({});
+  const openRouterRequestGenerations = useRef<Record<string, number>>({});
+  const [pendingOpenRouterBaseSlug, setPendingOpenRouterBaseSlug] = useState<string | null>(null);
   // Slugs committed to the picker but not yet published, per provider. Adding
   // republishes the whole catalog to every installed client, which is the
   // slowest thing this page starts; without a placeholder the models simply are
@@ -371,6 +382,50 @@ export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dat
     }
   };
 
+  const discoverOpenRouter = async (
+    modelSlug: string,
+    { refresh = false, keepOnFailure = false } = {},
+  ) => {
+    if (!api) return;
+    const generation = (openRouterRequestGenerations.current[modelSlug] ?? 0) + 1;
+    openRouterRequestGenerations.current[modelSlug] = generation;
+    setOpenRouterProviderStates((current) => ({
+      ...current,
+      [modelSlug]: {
+        ...(current[modelSlug] ?? { status: "idle", refreshing: false }),
+        status: "loading",
+        refreshing: refresh && Boolean(current[modelSlug]?.data),
+        error: undefined,
+      },
+    }));
+    try {
+      const data = await api.discoverOpenRouterProviders(modelSlug, { refresh });
+      if (openRouterRequestGenerations.current[modelSlug] !== generation) return;
+      setOpenRouterProviderStates((current) => ({
+        ...current,
+        [modelSlug]: { status: "ready", refreshing: false, data },
+      }));
+      if (!refresh && data.stale) {
+        void discoverOpenRouter(modelSlug, { refresh: true, keepOnFailure: true });
+      }
+    } catch (error) {
+      if (openRouterRequestGenerations.current[modelSlug] !== generation) return;
+      setOpenRouterProviderStates((current) => {
+        const prior = current[modelSlug];
+        return {
+          ...current,
+          [modelSlug]: keepOnFailure && prior?.data
+            ? { ...prior, status: "ready", refreshing: false }
+            : {
+                status: "error",
+                refreshing: false,
+                error: error instanceof Error ? error.message : "OpenRouter providers could not be loaded.",
+              },
+        };
+      });
+    }
+  };
+
   const catalogRequests = () => directory.flatMap((entry) => !catalogEligible(entry) || !providerConnected(entry, enabledProviders)
     ? []
     : (entry.setup?.catalogSources ?? []).map((source) => ({ entry, sourceId: source.id })));
@@ -401,6 +456,9 @@ export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dat
       });
       if (!published) return;
       await discoverCatalog(entry, sourceId);
+      if (entry.id === "openrouter" && selected[0]) {
+        setPendingOpenRouterBaseSlug(`openrouter/${selected[0]}`);
+      }
     } finally {
       // Cleared on failure too: a placeholder left behind after a failed add
       // would claim the model arrived. runAction reports the error itself.
@@ -522,6 +580,26 @@ export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dat
     return () => window.cancelAnimationFrame(frame);
   }, [focusRequest]);
 
+  // Curation owns model registration and publication. Once the refreshed
+  // router snapshot contains the first newly added OpenRouter route, carry the
+  // user directly into its provider-brand selector rather than making them
+  // hunt for the second half of the flow.
+  useEffect(() => {
+    if (!pendingOpenRouterBaseSlug) return;
+    const family = families.find((entry) => entry.routes.some((model) => (
+      model.slug === pendingOpenRouterBaseSlug &&
+      model.provider === "openrouter" &&
+      !model.openrouterRouting &&
+      routeUsable(model)
+    )));
+    if (!family) return;
+    setExpandedFamilyId(family.id);
+    if ((openRouterProviderStates[pendingOpenRouterBaseSlug]?.status ?? "idle") === "idle") {
+      void discoverOpenRouter(pendingOpenRouterBaseSlug);
+    }
+    setPendingOpenRouterBaseSlug(null);
+  }, [families, openRouterProviderStates, pendingOpenRouterBaseSlug]);
+
   if (!target) {
     return (
       <>
@@ -561,6 +639,21 @@ export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dat
     ? optimisticSubagentEfforts.mutate(slug, effort, `Set ${slug} subagent thinking to ${effortLabel(effort)}`, () => api.setSubagentEffort(slug, effort))
     : Promise.resolve();
 
+  const saveOpenRouterProviders = async (modelSlug: string, providerSlugs: string[]) => {
+    if (!api) return;
+    let saved = false;
+    await runAction(
+      `Update OpenRouter providers for ${modelSlug}`,
+      async () => {
+        await api.setOpenRouterProviders(modelSlug, providerSlugs);
+        saved = true;
+      },
+    );
+    if (!saved) return;
+    await discoverOpenRouter(modelSlug);
+    onRefresh();
+  };
+
   // The row-level switch speaks for the whole model: turning it on publishes
   // the route the router would pick anyway, turning it off withdraws every
   // route. Choosing between routes stays inside the expanded row.
@@ -594,7 +687,20 @@ export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dat
       inPicker={inPicker}
       on={on}
       expanded={expandedFamilyId === family.id}
-      onToggleExpanded={() => setExpandedFamilyId(expandedFamilyId === family.id ? null : family.id)}
+      onToggleExpanded={() => {
+        const opening = expandedFamilyId !== family.id;
+        setExpandedFamilyId(opening ? family.id : null);
+        const openRouterBase = family.routes.find((model) => (
+          model.provider === "openrouter" && !model.openrouterRouting && routeUsable(model)
+        ));
+        if (
+          opening &&
+          openRouterBase &&
+          (openRouterProviderStates[openRouterBase.slug]?.status ?? "idle") === "idle"
+        ) {
+          void discoverOpenRouter(openRouterBase.slug);
+        }
+      }}
       apiAvailable={Boolean(api)}
       providerNames={providerNames}
       pickerValue={(model) => optimisticPicker.value(model.slug, model.visible)}
@@ -604,6 +710,12 @@ export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dat
       onRoutePicker={(model, visible) => void updatePicker(model.slug, visible)}
       onSubagent={(model, enabled) => void updateSubagent(model.slug, enabled)}
       onEffort={(model, effort) => void updateSubagentEffort(model.slug, effort)}
+      openRouterProviderState={(() => {
+        const base = family.routes.find((model) => model.provider === "openrouter" && !model.openrouterRouting);
+        return base ? openRouterProviderStates[base.slug] : undefined;
+      })()}
+      onReloadOpenRouter={(modelSlug) => void discoverOpenRouter(modelSlug, { refresh: true, keepOnFailure: true })}
+      onSaveOpenRouter={(modelSlug, providerSlugs) => void saveOpenRouterProviders(modelSlug, providerSlugs)}
       onConnect={(providerId) => {
         const entry = directoryById.get(providerId);
         if (!entry?.setup) return;
@@ -1038,6 +1150,9 @@ function ModelFamilyRow({
   onRoutePicker,
   onSubagent,
   onEffort,
+  openRouterProviderState,
+  onReloadOpenRouter,
+  onSaveOpenRouter,
   onConnect,
 }: {
   family: ModelFamily;
@@ -1055,6 +1170,9 @@ function ModelFamilyRow({
   onRoutePicker: (model: RouterModel, visible: boolean) => void;
   onSubagent: (model: RouterModel, enabled: boolean) => void;
   onEffort: (model: RouterModel, effort: string) => void;
+  openRouterProviderState?: OpenRouterProviderViewState;
+  onReloadOpenRouter: (modelSlug: string) => void;
+  onSaveOpenRouter: (modelSlug: string, providerSlugs: string[]) => void;
   onConnect: (providerId: string) => void;
 }) {
   const preferred = preferredFamilyRoute(family);
@@ -1065,6 +1183,9 @@ function ModelFamilyRow({
   const managedByClient = usable.length > 0 && usable.every(nativeClientManaged);
   const triggerId = `family-trigger-${safeId(family.id)}`;
   const panelId = `family-panel-${safeId(family.id)}`;
+  const openRouterBase = family.routes.find((model) => (
+    model.provider === "openrouter" && !model.openrouterRouting && routeUsable(model)
+  ));
 
   // One muted line under the name instead of a row of columns. Reading left to
   // right beats hunting the same fact in four different x-positions.
@@ -1118,14 +1239,14 @@ function ModelFamilyRow({
         {multiRoute ? (
           <>
             <div className="pm-family-route-note">
-              The same model reaches you through more than one account. Each one has its own credential, quota, and pricing.
+              This model has multiple routes. A route may change the credential account or the downstream provider preference, so quota and pricing can differ.
             </div>
             {/* Labelling every row cost 12 words for 4 switches, and every row
                 sized its own columns so nothing lined up down the list. One
                 header, one shared grid. */}
             <div className="pm-route-table" role="list" aria-label={`${family.displayName} routes`}>
               <div className="pm-route-head" aria-hidden="true">
-                <span>Account</span>
+                <span>Route</span>
                 <span>Context</span>
                 <span>Input</span>
                 <span>In picker</span>
@@ -1148,20 +1269,40 @@ function ModelFamilyRow({
                 />
               ))}
             </div>
+            {openRouterBase ? (
+              <OpenRouterProviderSelector
+                model={openRouterBase}
+                state={openRouterProviderState}
+                apiAvailable={apiAvailable}
+                onReload={() => onReloadOpenRouter(openRouterBase.slug)}
+                onSave={(providerSlugs) => onSaveOpenRouter(openRouterBase.slug, providerSlugs)}
+              />
+            ) : null}
           </>
         ) : (
           // A single-route model already showed its name and provider in the
           // row above. Repeating that row inside itself explains nothing, so
           // the panel carries only what the summary had to leave out.
-          <ModelDetails
-            model={family.routes[0]}
-            providerName={providerNames.get(family.routes[0].provider) || providerDisplayName(family.routes[0].provider)}
-            selectedInSettings={subagentValue(family.routes[0])}
-            subagentEffort={effortValue(family.routes[0])}
-            apiAvailable={apiAvailable}
-            onSubagentChange={(checked) => onSubagent(family.routes[0], checked)}
-            onEffortChange={(effort) => onEffort(family.routes[0], effort)}
-          />
+          <>
+            <ModelDetails
+              model={family.routes[0]}
+              providerName={providerNames.get(family.routes[0].provider) || providerDisplayName(family.routes[0].provider)}
+              selectedInSettings={subagentValue(family.routes[0])}
+              subagentEffort={effortValue(family.routes[0])}
+              apiAvailable={apiAvailable}
+              onSubagentChange={(checked) => onSubagent(family.routes[0], checked)}
+              onEffortChange={(effort) => onEffort(family.routes[0], effort)}
+            />
+            {openRouterBase ? (
+              <OpenRouterProviderSelector
+                model={openRouterBase}
+                state={openRouterProviderState}
+                apiAvailable={apiAvailable}
+                onReload={() => onReloadOpenRouter(openRouterBase.slug)}
+                onSave={(providerSlugs) => onSaveOpenRouter(openRouterBase.slug, providerSlugs)}
+              />
+            ) : null}
+          </>
         )}
       </div>
     </article>
@@ -1193,7 +1334,7 @@ function ModelDetails({
       </div>
       <div>
         <dt>Route</dt>
-        <dd>{providerName} · {modelRouteKind(model)}</dd>
+        <dd>{routeName(model, providerName)} · {modelRouteKind(model)}</dd>
       </div>
       {routeUsable(model) ? (
         <div>
@@ -1229,6 +1370,101 @@ function ModelDetails({
       )}
     </dl>
   );
+}
+
+function OpenRouterProviderSelector({
+  model,
+  state,
+  apiAvailable,
+  onReload,
+  onSave,
+}: {
+  model: RouterModel;
+  state?: OpenRouterProviderViewState;
+  apiAvailable: boolean;
+  onReload: () => void;
+  onSave: (providerSlugs: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const providers = state?.data?.providers ?? [];
+  const storedSelection = useMemo(
+    () => providers.filter((provider) => provider.selected).map((provider) => provider.slug).sort(),
+    [providers],
+  );
+  useEffect(() => {
+    setSelected(storedSelection);
+  }, [model.slug, state?.data?.fetchedAt, storedSelection.join("\0")]);
+  const selectedSet = new Set(selected);
+  const dirty = selected.join("\0") !== storedSelection.join("\0");
+
+  return (
+    <section className="pm-openrouter-providers" aria-label={`Preferred OpenRouter providers for ${model.displayName}`}>
+      <div className="pm-openrouter-provider-head">
+        <div>
+          <strong>OpenRouter provider variants</strong>
+          <small>Automatic stays available. Checked brands appear as additional picker routes with fallback enabled.</small>
+        </div>
+        <Button variant="ghost" disabled={!apiAvailable || state?.refreshing} onClick={onReload}>
+          {state?.refreshing ? "Refreshing…" : "Refresh providers"}
+        </Button>
+      </div>
+      {state?.status === "loading" && !state.data ? (
+        <div className="pm-openrouter-provider-loading" aria-busy="true">
+          <SkeletonBlock />
+          <SkeletonBlock />
+        </div>
+      ) : state?.status === "error" ? (
+        <div className="pm-openrouter-provider-error">
+          <span>{state.error || "OpenRouter providers could not be loaded."}</span>
+          <Button variant="secondary" disabled={!apiAvailable} onClick={onReload}>Try again</Button>
+        </div>
+      ) : providers.length ? (
+        <>
+          <div className="pm-openrouter-provider-list">
+            {providers.map((provider) => (
+              <label key={provider.slug} className="pm-openrouter-provider-option" data-withdrawn={!provider.advertised}>
+                <input
+                  type="checkbox"
+                  checked={selectedSet.has(provider.slug)}
+                  disabled={!apiAvailable}
+                  onChange={(event) => setSelected((current) => (
+                    event.target.checked
+                      ? [...new Set([...current, provider.slug])].sort()
+                      : current.filter((slug) => slug !== provider.slug)
+                  ))}
+                />
+                <span>
+                  <strong>{provider.name}</strong>
+                  <small>
+                    {provider.advertised
+                      ? `${provider.endpointCount} endpoint${provider.endpointCount === 1 ? "" : "s"}${provider.quantizations.length ? ` · ${provider.quantizations.join(", ")}` : ""}${provider.available ? "" : " · temporarily unavailable"}`
+                      : "No longer advertised · saved route remains usable through fallback"}
+                  </small>
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="pm-openrouter-provider-actions">
+            <small>
+              {state?.data?.cached ? "Cached" : "Live"} inventory · {formatDateTime(state?.data?.fetchedAt)}
+            </small>
+            <Button variant="primary" disabled={!apiAvailable || !dirty} onClick={() => onSave(selected)}>
+              Save picker variants
+            </Button>
+          </div>
+        </>
+      ) : state?.status === "ready" ? (
+        <div className="pm-openrouter-provider-empty">OpenRouter currently advertises no providers for this model.</div>
+      ) : null}
+    </section>
+  );
+}
+
+function routeName(model: RouterModel, providerName: string): string {
+  if (model.openrouterRouting) {
+    return `${providerName} → ${model.openrouterRouting.providerName} preferred`;
+  }
+  return model.provider === "openrouter" ? `${providerName} · Automatic` : providerName;
 }
 
 // Turning the switch on adds the route to the subagent selection, and the
@@ -1272,11 +1508,12 @@ function ModelRouteRow({
   onEffortChange: (effort: string) => void;
   onConnect: () => void;
 }) {
+  const displayedRoute = routeName(model, providerName);
   const identity = (
     <div className="pm-route-identity">
       <ProviderLogo providerId={model.provider} displayName={providerName} size="medium" />
       <div>
-        <strong>{providerName}</strong>
+        <strong>{displayedRoute}</strong>
         {model.isFree ? <span className="pm-route-free">Free</span> : null}
         <small title={model.slug}>{model.slug}</small>
       </div>

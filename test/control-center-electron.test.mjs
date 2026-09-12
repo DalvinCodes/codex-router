@@ -313,14 +313,21 @@ test("Control Center groups provider routes under one model family", () => {
     { slug: "opencode-go/glm-5.3-flash", displayName: "GLM-5.3-Flash (opencode Go)", provider: "opencode-go", visible: true, enabled: true },
     { slug: "opencode-go/glm-5.3", displayName: "GLM-5.3 (opencode Go)", provider: "opencode-go", visible: true, enabled: true },
     { slug: "deepseek/deepseek-v4-pro", displayName: "DeepSeek V4 Pro (API)", provider: "deepseek", visible: true, enabled: true },
+    { slug: "openrouter/deepseek-v4.1-flash", displayName: "DeepSeek V4.1 Flash (OpenRouter)", provider: "openrouter", visible: true, enabled: true },
+    { slug: "openrouter/deepseek-v4.1-flash-via-deepinfra", displayName: "DeepSeek V4.1 Flash (OpenRouter · DeepInfra preferred)", provider: "openrouter", visible: true, enabled: true },
   ]);
-  assert.equal(families.length, 3);
+  assert.equal(families.length, 4);
   const glmFlash = families.find((family) => family.id === "glm-5-3-flash");
   assert.equal(glmFlash.displayName, "GLM-5.3-Flash");
   assert.deepEqual(glmFlash.routes.map((route) => route.slug), ["opencode-go/glm-5.3-flash"]);
   const glm = families.find((family) => family.id === "glm-5-3");
   assert.equal(glm.displayName, "GLM-5.3");
   assert.deepEqual(glm.routes.map((route) => route.slug), ["opencode-go/glm-5.3"]);
+  const openRouter = families.find((family) => family.id === "deepseek-v4-1-flash");
+  assert.deepEqual(openRouter.routes.map((route) => route.slug), [
+    "openrouter/deepseek-v4.1-flash",
+    "openrouter/deepseek-v4.1-flash-via-deepinfra",
+  ]);
   assert.equal(modelFamilyKey({ displayName: "Kimi K3 (OAuth)" }), "kimi-k3");
   assert.equal(modelFamilyKey({ displayName: "Kimi K3 (opencode Go)" }), "kimi-k3");
 });
@@ -1272,7 +1279,9 @@ test("preload exposes only the named control operations", async () => {
     "closeWindow",
     "setProviderEnabled",
     "discoverProviderModels",
+    "discoverOpenRouterProviders",
     "addProviderModels",
+    "setOpenRouterProviders",
     "connectProvider",
     "saveProviderCredential",
     "setSubagentEffort",
@@ -1327,8 +1336,11 @@ test("preload constructs exact positional IPC payloads", async () => {
     ["getChatGptAccountPool", [], null],
     ["discoverProviderModels", ["provider"], { providerId: "provider", refresh: false }],
     ["discoverProviderModels", ["provider", { refresh: true }], { providerId: "provider", refresh: true }],
+    ["discoverOpenRouterProviders", ["openrouter/model"], { modelSlug: "openrouter/model", refresh: false }],
+    ["discoverOpenRouterProviders", ["openrouter/model", { refresh: true }], { modelSlug: "openrouter/model", refresh: true }],
     ["setProviderEnabled", ["provider", false], { providerId: "provider", enabled: false }],
     ["addProviderModels", ["provider", ["model-a", "model-b"]], { providerId: "provider", modelIds: ["model-a", "model-b"] }],
+    ["setOpenRouterProviders", ["openrouter/model", ["deepinfra"]], { modelSlug: "openrouter/model", providerSlugs: ["deepinfra"] }],
     ["connectProvider", ["provider"], { providerId: "provider" }],
     ["saveProviderCredential", ["provider", "credential"], { providerId: "provider", credential: "credential" }],
     ["removeProviderCredential", ["provider"], { providerId: "provider" }],
@@ -1567,7 +1579,7 @@ test("the model directory combines provider setup with de-duplicated model-famil
   assert.match(models, /aria-expanded=\{expanded\}/);
   assert.match(models, /aria-controls=\{panelId\}/);
   assert.match(models, /hidden=\{!expanded\}/);
-  assert.match(models, /setExpandedFamilyId\(expandedFamilyId === family\.id \? null : family\.id\)/);
+  assert.match(models, /const opening = expandedFamilyId !== family\.id/);
   assert.match(models, /saveProviderCredential/);
   assert.match(models, /setProviderEnabled/);
   assert.match(models, /setPickerModel/);
@@ -1721,6 +1733,12 @@ test("the model directory combines provider setup with de-duplicated model-famil
   assert.match(providerModelsCss, /\.dialog-panel:has\(\.pm-add-models\)/);
   assert.match(providerModelsCss, /\.pm-filter-menu-wrap\s*\{/);
   assert.match(providerModelsCss, /\.pm-filter-menu\s*\{/);
+  assert.match(models, /discoverOpenRouterProviders\(modelSlug, \{ refresh \}\)/);
+  assert.match(models, /setOpenRouterProviders\(modelSlug, providerSlugs\)/);
+  assert.match(models, /Automatic stays available/);
+  assert.match(models, /No longer advertised/);
+  assert.match(models, /return `\$\{providerName\} → \$\{model\.openrouterRouting\.providerName\} preferred`/);
+  assert.match(providerModelsCss, /\.pm-openrouter-providers\s*\{/);
   assert.doesNotMatch(providerModelsCss, /\.pm-model-layout\s*\{/);
   // The removed provider accordion must not leave its styles behind.
   assert.doesNotMatch(providerModelsCss, /\.pm-live-catalog|\.pm-catalog-search-row|\.pm-provider-detail/);
@@ -2054,6 +2072,12 @@ test("provider writes republish all installed targets and roll selection back on
   assert.ok(add, "model-add handler should be readable");
   assert.match(add, /\[id, "--models", unique\.join\(","\), "--refresh", "--apply"\]/);
   assert.match(add, /CATALOG_MUTATION_TIMEOUT_MS/);
+
+  const setOpenRouter = source.match(/handleAction\("setOpenRouterProviders"[\s\S]*?\n  \}\);/)?.[0];
+  assert.ok(setOpenRouter, "OpenRouter provider-set handler should be readable");
+  assert.match(setOpenRouter, /\["openrouter-providers", "set", model/);
+  assert.match(setOpenRouter, /"--apply"/);
+  assert.match(setOpenRouter, /CATALOG_MUTATION_TIMEOUT_MS/);
 
   // Replacing a credential can mean a different account with a different
   // entitlement, so neither save nor removal may leave the old list behind.

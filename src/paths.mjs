@@ -167,6 +167,17 @@ export const NATIVE_SESSION_CONSENT_PATH = path.join(
 // cache for the curation surfaces, never an authority: what is registered
 // locally is always recomputed from the live registry.
 export const PROVIDER_CATALOG_CACHE_PATH = path.join(STATE_DIR, "provider-catalog-cache.json");
+// OpenRouter provider-brand variants are machine-local routing preferences,
+// not part of the checked-in model registry. Keep their durable selections
+// separate from the transient endpoint inventory cache: the former survives
+// withdrawn providers and missing base models, while the latter can always be
+// discarded and fetched again.
+export const OPENROUTER_PROVIDER_VARIANTS_PATH =
+  process.env.MODEL_ROUTER_OPENROUTER_PROVIDER_VARIANTS ||
+  path.join(STATE_DIR, "openrouter-provider-variants.json");
+export const OPENROUTER_PROVIDER_CACHE_PATH =
+  process.env.MODEL_ROUTER_OPENROUTER_PROVIDER_CACHE ||
+  path.join(STATE_DIR, "openrouter-provider-cache.json");
 export const PROVIDER_API_KEY_POOL_PATH =
   process.env.MODEL_ROUTER_API_KEY_POOL_PATH ||
   path.join(STATE_DIR, "provider-api-key-pools.json");

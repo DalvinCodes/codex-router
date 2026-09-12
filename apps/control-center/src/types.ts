@@ -49,6 +49,31 @@ export interface RouterModel {
   isFree?: boolean;
   /** False only for a checked-in research route that is not currently routable. */
   available?: boolean;
+  openrouterRouting?: {
+    baseModel: string;
+    providerSlug: string;
+    providerName: string;
+    allowFallbacks: boolean;
+  };
+}
+
+export interface OpenRouterProviderOption {
+  slug: string;
+  name: string;
+  endpointCount: number;
+  quantizations: string[];
+  available: boolean;
+  advertised: boolean;
+  selected: boolean;
+}
+
+export interface OpenRouterProviderDiscovery {
+  modelSlug: string;
+  upstreamModel: string;
+  providers: OpenRouterProviderOption[];
+  cached: boolean;
+  stale: boolean;
+  fetchedAt: string;
 }
 
 export interface RouterKnownModel {
@@ -737,6 +762,7 @@ export interface RouterControlApi {
   getHealth(): Promise<RouterHealth>;
   getProviders(): Promise<ProviderSetupSnapshot>;
   discoverProviderModels(provider: string, options?: { refresh?: boolean }): Promise<ProviderCatalog>;
+  discoverOpenRouterProviders(modelSlug: string, options?: { refresh?: boolean }): Promise<OpenRouterProviderDiscovery>;
   getAccountUsage(): Promise<AccountUsage>;
   getProviderUsage(): Promise<ProviderUsageSnapshot>;
   getLocalModels(): Promise<LocalModelsSnapshot>;
@@ -751,6 +777,7 @@ export interface RouterControlApi {
   refreshAll(): Promise<unknown>;
   setProviderEnabled(provider: string, enabled: boolean): Promise<unknown>;
   addProviderModels(provider: string, modelIds: string[]): Promise<unknown>;
+  setOpenRouterProviders(modelSlug: string, providerSlugs: string[]): Promise<unknown>;
   connectProvider(provider: string): Promise<unknown>;
   saveProviderCredential(provider: string, credential: string): Promise<unknown>;
   removeProviderCredential(provider: string): Promise<unknown>;

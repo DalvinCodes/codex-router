@@ -4601,6 +4601,7 @@ test("API forwarder routes Qwen plan models without unsupported parameters", asy
 function curatedOpenRouterModels() {
   const dir = mkdtempSync(path.join(os.tmpdir(), "routing-openrouter-models-"));
   const file = path.join(dir, "user-models.json");
+  const variantsFile = path.join(dir, "openrouter-provider-variants.json");
   const entry = (provider, upstreamModel, gatewayModel, requestProfile) => ({
     slug: `${provider}/${upstreamModel}`,
     gatewayModel,
@@ -4642,11 +4643,22 @@ function curatedOpenRouterModels() {
     }),
     "utf8",
   );
+  writeFileSync(variantsFile, JSON.stringify({
+    version: 1,
+    variants: [{
+      baseModel: "openrouter/openai/gpt-5.3",
+      providerSlug: "deepinfra",
+      providerName: "DeepInfra",
+      allowFallbacks: true,
+    }],
+  }), "utf8");
   return {
     dir,
     file,
+    variantsFile,
     restricted: "openrouter-qwen-qwen3-8-max",
     unrestricted: "openrouter-openai-gpt-5-3",
+    preferred: "openrouter-openai-gpt-5-3-via-deepinfra",
     strictSchema: "openrouter-vendor-strict-schema",
     ordinarySchema: "openrouter-vendor-ordinary-schema",
     embeddings: "openrouter-vendor-embedding-only",
@@ -4655,6 +4667,71 @@ function curatedOpenRouterModels() {
     chutes: "chutes-moonshotai-kimi-k3-tee",
   };
 }
+
+test("API forwarder sends exact OpenRouter Automatic and preferred-provider bodies", async () => {
+  const upstreamRequests = [];
+  const upstream = await mockServer(async (request, response) => {
+    upstreamRequests.push(await bodyJson(request));
+    json(response, 200, { id: "completion", choices: [] });
+  });
+  const curated = curatedOpenRouterModels();
+  const forwarderPort = await openPort();
+  const forwarder = run("api-forwarder.mjs", {
+    CODEX_ROUTER_API_PORT: String(forwarderPort),
+    MODEL_ROUTER_USER_MODELS: curated.file,
+    MODEL_ROUTER_OPENROUTER_PROVIDER_VARIANTS: curated.variantsFile,
+    OPENROUTER_API_BASE_URL: `http://127.0.0.1:${upstream.port}`,
+    OPENROUTER_API_KEY: "TEST_OPENROUTER_API_KEY",
+    CODEX_ROUTER_QUIET: "1",
+  });
+  const headers = {
+    Authorization: `Bearer ${INTERNAL_KEY}`,
+    "Content-Type": "application/json",
+  };
+  try {
+    await waitFor(`http://127.0.0.1:${forwarderPort}/health`, forwarder, headers);
+    const common = {
+      stream: false,
+      messages: [{ role: "user", content: "test" }],
+      tools: [{ type: "function", function: { name: "lookup", parameters: { type: "object" } } }],
+      reasoning_effort: "high",
+    };
+    const automatic = await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: curated.unrestricted, ...common }),
+    });
+    assert.equal(automatic.status, 200, forwarder.testErrors());
+    const preferred = await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: curated.preferred,
+        ...common,
+        provider: { order: ["caller-choice"], allow_fallbacks: false },
+      }),
+    });
+    assert.equal(preferred.status, 200, forwarder.testErrors());
+    assert.equal(upstreamRequests.length, 2);
+    assert.equal(upstreamRequests[0].model, "openai/gpt-5.3");
+    assert.equal("provider" in upstreamRequests[0], false);
+    assert.equal(upstreamRequests[1].model, "openai/gpt-5.3");
+    assert.deepEqual(upstreamRequests[1].provider, {
+      order: ["deepinfra"],
+      allow_fallbacks: true,
+    });
+    for (const request of upstreamRequests) {
+      assert.equal(request.stream, false);
+      assert.deepEqual(request.messages, common.messages);
+      assert.deepEqual(request.tools, common.tools);
+      assert.equal(request.reasoning_effort, "high");
+    }
+  } finally {
+    await stopChild(forwarder);
+    await closeServer(upstream.server);
+    rmSync(curated.dir, { recursive: true, force: true });
+  }
+});
 
 test("API forwarder sends only explicitly declared embeddings without chat conversion", async () => {
   const upstreamRequests = [];

@@ -66,12 +66,36 @@ const bridgeSource = String.raw`
     contextWindow: 128000,
     inputModalities: ["text"],
   };
+  const openRouterAutomatic = {
+    slug: "openrouter/deepseek-v4.1-flash",
+    displayName: "DeepSeek V4.1 Flash (OpenRouter)",
+    description: "Automatic OpenRouter route.",
+    provider: "openrouter",
+    enabled: true,
+    visible: true,
+    multiAgentVersion: "v1",
+    subagentCertification: "unknown",
+    reasoningLevels: ["low", "high", "max"],
+    contextWindow: 1048576,
+    inputModalities: ["text", "image"],
+  };
+  const openRouterWithdrawn = {
+    ...openRouterAutomatic,
+    slug: "openrouter/deepseek-v4.1-flash-via-oldhost",
+    displayName: "DeepSeek V4.1 Flash (OpenRouter · Old Host preferred)",
+    openrouterRouting: {
+      baseModel: openRouterAutomatic.slug,
+      providerSlug: "oldhost",
+      providerName: "Old Host",
+      allowFallbacks: true,
+    },
+  };
   const oxProviders = [
     { id: "commandcode", displayName: "Command Code", kind: "api", configured: false },
     { id: "nousresearch", displayName: "Nous Research", kind: "api", configured: false },
     { id: "opencode-free", displayName: "OpenCode Free", kind: "anonymous", configured: true },
     { id: "opencode-go", displayName: "opencode Go/Zen", kind: "api", configured: true },
-    { id: "openrouter", displayName: "OpenRouter", kind: "api", configured: false },
+    { id: "openrouter", displayName: "OpenRouter", kind: "api", configured: true },
     { id: "venice", displayName: "Venice", kind: "api", configured: false },
   ];
   const knownOxModels = oxProviders.map((provider) => ({
@@ -94,7 +118,7 @@ const bridgeSource = String.raw`
     target: "codex",
     configured: true,
     active: true,
-    enabledProviders: ["deepseek", "opencode-free", "opencode-go"],
+    enabledProviders: ["deepseek", "opencode-free", "opencode-go", "openrouter"],
     providers: [
       { id: "deepseek", displayName: "DeepSeek", kind: "api" },
       { id: "kilo-free", displayName: "Kilo Free", kind: "anonymous" },
@@ -141,8 +165,8 @@ const bridgeSource = String.raw`
     catalog: {
       source: "codex-router",
       configured: true,
-      enabledProviders: ["deepseek", "opencode-free", "opencode-go"],
-      models: [selectedModel, ...activeOxModels],
+      enabledProviders: ["deepseek", "opencode-free", "opencode-go", "openrouter"],
+      models: [selectedModel, openRouterAutomatic, openRouterWithdrawn, ...activeOxModels],
       knownModels: knownOxModels,
       picker: { hidden: [], visible: [selectedModel.slug], hasExplicitVisibility: true },
       subagents,
@@ -430,8 +454,26 @@ const bridgeSource = String.raw`
     },
     controlTray: async () => ({ status: { supported: true } }),
     discoverProviderModels: async (providerId) => catalog(providerId),
+    discoverOpenRouterProviders: async (modelSlug, options) => {
+      record("discoverOpenRouterProviders", modelSlug, options || {});
+      return {
+        modelSlug,
+        upstreamModel: "deepseek/deepseek-v4.1-flash",
+        providers: [
+          { slug: "deepinfra", name: "DeepInfra", endpointCount: 2, quantizations: ["fp16", "fp8"], available: true, advertised: true, selected: false },
+          { slug: "oldhost", name: "Old Host", endpointCount: 0, quantizations: [], available: false, advertised: false, selected: true },
+        ],
+        cached: !options?.refresh,
+        stale: !options?.refresh,
+        fetchedAt: "2026-08-24T00:00:00.000Z",
+      };
+    },
     addProviderModels: async (providerId, modelIds) => {
       record("addProviderModels", providerId, [...modelIds]);
+      return { ok: true };
+    },
+    setOpenRouterProviders: async (modelSlug, providerSlugs) => {
+      record("setOpenRouterProviders", modelSlug, [...providerSlugs]);
       return { ok: true };
     },
     setPickerModels: async (showAll) => {
@@ -754,10 +796,10 @@ test("the production renderer exposes model discovery and picker actions", { tim
     // chips, the rest behind one menu.
     const connections = page.locator(".pm-connections");
     await connections.waitFor();
-    assert.match(await connections.innerText(), /3 of 8 connected/);
+    assert.match(await connections.innerText(), /4 of 8 connected/);
     assert.deepEqual(
       (await connections.locator(".pm-chip:not(.pm-chip-add)").allTextContents()).map((text) => text.trim()).sort(),
-      ["DeepSeek", "OpenCode Free", "opencode Go/Zen"].sort(),
+      ["DeepSeek", "OpenCode Free", "OpenRouter", "opencode Go/Zen"].sort(),
     );
     await connections.getByRole("button", { name: "Connect provider", exact: true }).click();
     const connectMenu = page.locator(".pm-connect-menu");
@@ -765,7 +807,7 @@ test("the production renderer exposes model discovery and picker actions", { tim
     // An anonymous endpoint is not connected until it is explicitly enabled,
     // so it belongs with the providers still waiting for a connection.
     assert.match(await connectMenu.innerText(), /Kilo Free/);
-    assert.equal(await connectMenu.getByRole("menuitem").count(), 5);
+    assert.equal(await connectMenu.getByRole("menuitem").count(), 4);
     await page.keyboard.press("Escape");
 
     // A single-route model's thinking menu opens below its definition-list
@@ -808,7 +850,30 @@ test("the production renderer exposes model discovery and picker actions", { tim
     // that would make it usable.
     assert.equal(await oxFamily.getByRole("button", { name: /^Connect / }).count(), 4);
     const columns = await oxFamily.locator(".pm-route-head > span").allTextContents();
-    assert.deepEqual(columns, ["Account", "Context", "Input", "In picker", "Subagents", "Thinking"]);
+    assert.deepEqual(columns, ["Route", "Context", "Input", "In picker", "Subagents", "Thinking"]);
+
+    // Registered OpenRouter families lazily load provider brands only when
+    // expanded. Cached stale data remains interactive while a live refresh
+    // replaces it, and only checked brands are sent to the mutation API.
+    await modelSearch.fill("DeepSeek V4.1 Flash");
+    const openRouterFamily = page.locator(".pm-family-row").filter({ hasText: "DeepSeek V4.1 Flash" });
+    await openRouterFamily.waitFor();
+    await openRouterFamily.locator(".pm-family-open").click();
+    await openRouterFamily.getByText("OpenRouter provider variants", { exact: true }).waitFor();
+    await page.waitForFunction(() => window.routerControlTest.calls()
+      .filter((call) => call.name === "discoverOpenRouterProviders").length >= 2);
+    assert.match(await openRouterFamily.innerText(), /OpenRouter · Automatic/);
+    assert.match(await openRouterFamily.innerText(), /OpenRouter → Old Host preferred/);
+    const deepInfra = openRouterFamily.locator(".pm-openrouter-provider-option").filter({ hasText: "DeepInfra" });
+    const oldHost = openRouterFamily.locator(".pm-openrouter-provider-option").filter({ hasText: "Old Host" });
+    assert.equal(await deepInfra.locator('input[type="checkbox"]').isChecked(), false);
+    assert.equal(await oldHost.locator('input[type="checkbox"]').isChecked(), true);
+    assert.match(await oldHost.innerText(), /No longer advertised/);
+    await deepInfra.locator('input[type="checkbox"]').check();
+    await oldHost.locator('input[type="checkbox"]').uncheck();
+    await openRouterFamily.getByRole("button", { name: "Save picker variants", exact: true }).click();
+    await page.waitForFunction(() => window.routerControlTest.calls()
+      .some((call) => call.name === "setOpenRouterProviders"));
     await modelSearch.fill("");
 
     // Adding reads every connected provider's catalog at once. Only a provider
@@ -843,7 +908,7 @@ test("the production renderer exposes model discovery and picker actions", { tim
     // the row across the list at the moment the reader looks for confirmation.
     const modelNames = () => page.locator(".pm-family-main > strong").allTextContents();
     const orderBefore = await modelNames();
-    assert.deepEqual(orderBefore, ["DeepSeek Chat", "Ox Alpha"]);
+    assert.deepEqual(orderBefore, ["DeepSeek Chat", "DeepSeek V4.1 Flash", "Ox Alpha"]);
     const deepseekRow = page.locator(".pm-family-row").filter({ hasText: "DeepSeek Chat" });
     assert.equal((await deepseekRow.locator(".pm-family-state").innerText()).trim(), "On");
     await deepseekRow.locator('.pm-family-action input[type="checkbox"]').click();
@@ -861,6 +926,10 @@ test("the production renderer exposes model discovery and picker actions", { tim
     assert.deepEqual(calls.find((call) => call.name === "addProviderModels")?.args, [
       "deepseek",
       ["catalog-addable"],
+    ]);
+    assert.deepEqual(calls.find((call) => call.name === "setOpenRouterProviders")?.args, [
+      "openrouter/deepseek-v4.1-flash",
+      ["deepinfra"],
     ]);
     assert.equal(calls.some((call) => call.name === "setPickerModels" && call.args[0] === true), true);
 

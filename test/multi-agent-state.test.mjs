@@ -12,11 +12,13 @@ const {
   MULTI_AGENT_STATE_PATH,
   applyMultiAgentCapabilities,
   applyMultiAgentSettings,
+  forgetMultiAgentModels,
   readAllMultiAgent,
   readMultiAgentSettings,
   setMultiAgentMode,
   setMultiAgentModel,
   setMultiAgentModels,
+  setSubagentEffort,
   subagentSettingsSnapshot,
 } = await import("../src/multi-agent-state.mjs");
 
@@ -90,6 +92,28 @@ test("provider-sized subagent changes preserve other providers", () => {
     true,
   );
   assert.deepEqual(subagentSettingsSnapshot().disabled, ["kimi-oauth/k3"]);
+});
+
+test("forgetting provider variants clears route-specific subagent state only", () => {
+  setMultiAgentMode("selected");
+  setMultiAgentModel("openrouter/model-via-deepinfra", true);
+  setMultiAgentModel("openrouter/model-via-together", false);
+  setMultiAgentModel("kimi-oauth/k3", true);
+  setSubagentEffort("openrouter/model-via-deepinfra", "high");
+  setSubagentEffort("openrouter/model-via-together", "low");
+  setSubagentEffort("kimi-oauth/k3", "medium");
+
+  const next = forgetMultiAgentModels([
+    "openrouter/model-via-deepinfra",
+    "openrouter/model-via-together",
+  ]);
+
+  assert.equal(next.enabled.includes("openrouter/model-via-deepinfra"), false);
+  assert.equal(next.disabled.includes("openrouter/model-via-together"), false);
+  assert.equal("openrouter/model-via-deepinfra" in next.efforts, false);
+  assert.equal("openrouter/model-via-together" in next.efforts, false);
+  assert.equal(next.enabled.includes("kimi-oauth/k3"), true);
+  assert.equal(next.efforts["kimi-oauth/k3"], "medium");
 });
 
 test("picker visibility withholds a model the mode would otherwise advertise", () => {

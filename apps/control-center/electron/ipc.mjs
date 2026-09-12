@@ -59,6 +59,7 @@ const RETENTION_MIN_TTL_DAYS = 1;
 const RETENTION_MAX_TTL_DAYS = 3_650;
 const MODEL_SLUG = /^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,200}$/;
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,80}$/;
+const OPENROUTER_PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,80}$/;
 const CHATGPT_ACCOUNT_ID = /^acct_[A-Za-z0-9_-]{8,80}$/;
 const CHATGPT_LOGIN_URL = /https:\/\/auth\.openai\.com\/oauth\/authorize\?[^\s"'<>]+/;
 const CHATGPT_LOGIN_COMPLETION_TIMEOUT_MS = 10 * 60_000;
@@ -1404,6 +1405,14 @@ export function registerIpcHandlers({
       throw new Error("Provider discovery returned invalid JSON.");
     }
   });
+  handle("discoverOpenRouterProviders", async ({ modelSlug, refresh = false } = {}) => {
+    const model = await validateModel(modelSlug);
+    if (typeof refresh !== "boolean") throw new Error("refresh must be boolean.");
+    return runJson(
+      ["openrouter-providers", "list", model, ...(refresh ? ["--refresh"] : [])],
+      { timeoutMs: 45_000 },
+    );
+  });
   handle("getAccountUsage", async () => runJson(["account"], { timeoutMs: 20_000 }));
   handle("getProviderUsage", async () => runJson(
     ["provider-usage"],
@@ -1525,6 +1534,22 @@ export function registerIpcHandlers({
       { timeoutMs: CATALOG_MUTATION_TIMEOUT_MS },
     );
     return { provider: id, added: unique };
+  });
+  handleAction("setOpenRouterProviders", async ({ modelSlug, providerSlugs } = {}) => {
+    const model = await validateModel(modelSlug);
+    if (!Array.isArray(providerSlugs) || providerSlugs.length > 200) {
+      throw new Error("Choose no more than 200 OpenRouter providers.");
+    }
+    const unique = [...new Set(providerSlugs.map((slug) => (
+      stringValue(slug, "OpenRouter provider", OPENROUTER_PROVIDER_ID).toLowerCase()
+    )))];
+    if (unique.length !== providerSlugs.length) {
+      throw new Error("OpenRouter provider slugs must be unique.");
+    }
+    return runJson(
+      ["openrouter-providers", "set", model, unique.length ? unique.join(",") : "none", "--apply"],
+      { timeoutMs: CATALOG_MUTATION_TIMEOUT_MS },
+    );
   });
   handleAction("connectProvider", async ({ providerId } = {}) => {
     const { id, provider } = await validateProvider(providerId, "sign-in");

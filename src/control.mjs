@@ -98,7 +98,7 @@ const restartBearingOverlayOperation = new Set([
   "vision-bridge",
   "local-models",
   "signed-routing",
-]).has(args[0]);
+]).has(args[0]) || (args[0] === "openrouter-providers" && args[1] === "set");
 const selfReplacingControl =
   args[0] === "maintenance" ||
   (args[0] === "tray" && ["refresh", "rebuild"].includes(args[1]));
@@ -357,6 +357,9 @@ async function emitProbe() {
     // global list. Omitted when the model advertises none, so an entry without
     // a ladder keeps the exact shape it always had.
     ...reasoningLevelField(model.reasoningLevels),
+    ...(model.openrouterRouting
+      ? { openrouterRouting: { ...model.openrouterRouting } }
+      : {}),
   }));
   const selectedModel = TARGET === "codex" ? configuredDefaultModel(CONFIG_PATH) : undefined;
   const codexConfig = TARGET === "codex" ? codexConfigSnapshot() : undefined;
@@ -1375,6 +1378,42 @@ async function refreshModelSettingsCatalog() {
         : "The router model catalogs could not be refreshed.",
     );
   }
+}
+
+async function handleOpenRouterProviders(action, modelSlug, value, flags = []) {
+  const normalizedAction = String(action || "").trim();
+  const normalizedModel = String(modelSlug || "").trim();
+  if (!normalizedModel) {
+    throw new Error(
+      "Usage: control openrouter-providers list <model-slug> [--refresh] | " +
+        "set <model-slug> <provider-slug,...|none> --apply",
+    );
+  }
+  const { discoverOpenRouterProviders } = await import("./openrouter-provider-discovery.mjs");
+  if (normalizedAction === "list") {
+    const discovery = await discoverOpenRouterProviders(normalizedModel, {
+      refresh: flags.includes("--refresh") || value === "--refresh",
+    });
+    process.stdout.write(`${JSON.stringify(discovery)}\n`);
+    return;
+  }
+  if (normalizedAction !== "set") {
+    throw new Error(
+      "Usage: control openrouter-providers list <model-slug> [--refresh] | " +
+        "set <model-slug> <provider-slug,...|none> --apply",
+    );
+  }
+  const allFlags = new Set([value, ...flags].filter((item) => String(item).startsWith("--")));
+  if (!allFlags.has("--apply")) {
+    throw new Error("Saving OpenRouter provider variants requires --apply.");
+  }
+  const rawSelection = value === "--apply" ? "" : String(value || "").trim();
+  const requestedSlugs = rawSelection === "none" || rawSelection === ""
+    ? []
+    : [...new Set(rawSelection.split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean))];
+  const { setOpenRouterProviders } = await import("./openrouter-provider-selection.mjs");
+  const result = await setOpenRouterProviders(normalizedModel, requestedSlugs);
+  process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
 async function restartRouterForLocalRoutes({ signal, deadline } = {}) {
@@ -3421,6 +3460,8 @@ if (args.includes("--probe")) {
   await handleToolResultAging(args[1], args[2], args.slice(2));
 } else if (args[0] === "local-models") {
   await handleLocalModels(args[1], args[2], ...args.slice(3));
+} else if (args[0] === "openrouter-providers") {
+  await handleOpenRouterProviders(args[1], args[2], args[3], args.slice(3));
 } else if (args[0] === "vision-bridge") {
   await handleVisionBridge(args[1] || "status", args[2], args[3]);
 } else if (args[0] === "failover") {

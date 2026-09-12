@@ -14,6 +14,8 @@ const routerControl = Object.freeze({
   getProviders: () => call("getProviders"),
   discoverProviderModels: (providerId, options) =>
     call("discoverProviderModels", { providerId, refresh: Boolean(options?.refresh) }),
+  discoverOpenRouterProviders: (modelSlug, options) =>
+    call("discoverOpenRouterProviders", { modelSlug, refresh: Boolean(options?.refresh) }),
   getAccountUsage: () => call("getAccountUsage"),
   getProviderUsage: () => call("getProviderUsage"),
   getLocalModels: () => call("getLocalModels"),
@@ -28,6 +30,8 @@ const routerControl = Object.freeze({
   refreshAll: () => call("refreshAll"),
   setProviderEnabled: (providerId, enabled) => call("setProviderEnabled", { providerId, enabled }),
   addProviderModels: (providerId, modelIds) => call("addProviderModels", { providerId, modelIds }),
+  setOpenRouterProviders: (modelSlug, providerSlugs) =>
+    call("setOpenRouterProviders", { modelSlug, providerSlugs }),
   connectProvider: (providerId) => call("connectProvider", { providerId }),
   saveProviderCredential: (providerId, credential) => call("saveProviderCredential", { providerId, credential }),
   removeProviderCredential: (providerId) => call("removeProviderCredential", { providerId }),
