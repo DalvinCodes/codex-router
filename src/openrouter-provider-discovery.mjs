@@ -241,6 +241,7 @@ function discoveryResult({ model, providers, fetchedAt, cached, stale }) {
     ...provider,
     advertised: true,
     selected: selectedBySlug.has(provider.slug),
+    allowFallbacks: selectedBySlug.get(provider.slug)?.allowFallbacks ?? true,
   }));
   const advertised = new Set(result.map((provider) => provider.slug));
   for (const selection of selected) {
@@ -253,6 +254,7 @@ function discoveryResult({ model, providers, fetchedAt, cached, stale }) {
       available: false,
       advertised: false,
       selected: true,
+      allowFallbacks: selection.allowFallbacks,
     });
   }
   result.sort((left, right) => left.name.localeCompare(right.name) || left.slug.localeCompare(right.slug));

@@ -722,10 +722,11 @@
   accent-color: var(--accent);
 }
 
-.pm-openrouter-provider-option > span {
+.pm-openrouter-provider-option > label {
   display: grid;
   min-width: 0;
   gap: 3px;
+  cursor: pointer;
 }
 
 .pm-openrouter-provider-option strong {
@@ -742,6 +743,23 @@
   color: var(--ink-faint);
   font-size: 8px;
   line-height: 1.4;
+}
+
+.pm-openrouter-provider-option select {
+  grid-column: 2;
+  min-width: 0;
+  height: 25px;
+  padding: 3px 24px 3px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface-0);
+  color: var(--ink-subtle);
+  font: inherit;
+  font-size: 8.5px;
+}
+
+.pm-openrouter-provider-option select:disabled {
+  opacity: 0.48;
 }
 
 /* The effort control, sized to its column so the row stays one line. */

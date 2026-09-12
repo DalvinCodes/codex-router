@@ -20,6 +20,7 @@ import { useOptimisticValues, type RunAction } from "../useOptimisticValues";
 import type {
   ModelViewFocusRequest,
   OpenRouterProviderDiscovery,
+  OpenRouterProviderSelection,
   ProviderCatalog,
   ProviderSetup,
   ProviderSetupSnapshot,
@@ -156,6 +157,12 @@ function routeUsable(model: RouterModel): boolean {
 function displayedFamilyRoutes(routes: RouterModel[]): RouterModel[] {
   const baseRoutes = routes.filter((model) => !model.openrouterRouting);
   return baseRoutes.length ? baseRoutes : routes;
+}
+
+function openRouterSelectionKey(selections: OpenRouterProviderSelection[]): string {
+  return selections
+    .map((selection) => `${selection.providerSlug}:${selection.allowFallbacks ? "with" : "without"}`)
+    .join("\0");
 }
 
 export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dataReady, onRefresh, runAction, focusRequest }: ModelsPageProps) {
@@ -648,13 +655,13 @@ export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dat
     ? optimisticSubagentEfforts.mutate(slug, effort, `Set ${slug} subagent thinking to ${effortLabel(effort)}`, () => api.setSubagentEffort(slug, effort))
     : Promise.resolve();
 
-  const saveOpenRouterProviders = async (modelSlug: string, providerSlugs: string[]) => {
+  const saveOpenRouterProviders = async (modelSlug: string, selections: OpenRouterProviderSelection[]) => {
     if (!api) return;
     let saved = false;
     await runAction(
       `Update OpenRouter providers for ${modelSlug}`,
       async () => {
-        await api.setOpenRouterProviders(modelSlug, providerSlugs);
+        await api.setOpenRouterProviders(modelSlug, selections);
         saved = true;
       },
     );
@@ -724,7 +731,7 @@ export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dat
         return base ? openRouterProviderStates[base.slug] : undefined;
       })()}
       onReloadOpenRouter={(modelSlug) => void discoverOpenRouter(modelSlug, { refresh: true, keepOnFailure: true })}
-      onSaveOpenRouter={(modelSlug, providerSlugs) => void saveOpenRouterProviders(modelSlug, providerSlugs)}
+      onSaveOpenRouter={(modelSlug, selections) => void saveOpenRouterProviders(modelSlug, selections)}
       onConnect={(providerId) => {
         const entry = directoryById.get(providerId);
         if (!entry?.setup) return;
@@ -1181,7 +1188,7 @@ function ModelFamilyRow({
   onEffort: (model: RouterModel, effort: string) => void;
   openRouterProviderState?: OpenRouterProviderViewState;
   onReloadOpenRouter: (modelSlug: string) => void;
-  onSaveOpenRouter: (modelSlug: string, providerSlugs: string[]) => void;
+  onSaveOpenRouter: (modelSlug: string, selections: OpenRouterProviderSelection[]) => void;
   onConnect: (providerId: string) => void;
 }) {
   const displayedRoutes = displayedFamilyRoutes(family.routes);
@@ -1285,7 +1292,7 @@ function ModelFamilyRow({
                 state={openRouterProviderState}
                 apiAvailable={apiAvailable}
                 onReload={() => onReloadOpenRouter(openRouterBase.slug)}
-                onSave={(providerSlugs) => onSaveOpenRouter(openRouterBase.slug, providerSlugs)}
+                onSave={(selections) => onSaveOpenRouter(openRouterBase.slug, selections)}
               />
             ) : null}
           </>
@@ -1309,7 +1316,7 @@ function ModelFamilyRow({
                 state={openRouterProviderState}
                 apiAvailable={apiAvailable}
                 onReload={() => onReloadOpenRouter(openRouterBase.slug)}
-                onSave={(providerSlugs) => onSaveOpenRouter(openRouterBase.slug, providerSlugs)}
+                onSave={(selections) => onSaveOpenRouter(openRouterBase.slug, selections)}
               />
             ) : null}
           </>
@@ -1393,26 +1400,33 @@ function OpenRouterProviderSelector({
   state?: OpenRouterProviderViewState;
   apiAvailable: boolean;
   onReload: () => void;
-  onSave: (providerSlugs: string[]) => void;
+  onSave: (selections: OpenRouterProviderSelection[]) => void;
 }) {
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selected, setSelected] = useState<OpenRouterProviderSelection[]>([]);
   const providers = state?.data?.providers ?? [];
   const storedSelection = useMemo(
-    () => providers.filter((provider) => provider.selected).map((provider) => provider.slug).sort(),
+    () => providers
+      .filter((provider) => provider.selected)
+      .map((provider) => ({
+        providerSlug: provider.slug,
+        allowFallbacks: provider.allowFallbacks !== false,
+      }))
+      .sort((left, right) => left.providerSlug.localeCompare(right.providerSlug)),
     [providers],
   );
+  const storedSelectionKey = openRouterSelectionKey(storedSelection);
   useEffect(() => {
     setSelected(storedSelection);
-  }, [model.slug, state?.data?.fetchedAt, storedSelection.join("\0")]);
-  const selectedSet = new Set(selected);
-  const dirty = selected.join("\0") !== storedSelection.join("\0");
+  }, [model.slug, state?.data?.fetchedAt, storedSelectionKey]);
+  const selectedBySlug = new Map(selected.map((selection) => [selection.providerSlug, selection]));
+  const dirty = openRouterSelectionKey(selected) !== storedSelectionKey;
 
   return (
-    <section className="pm-openrouter-providers" aria-label={`Preferred OpenRouter providers for ${model.displayName}`}>
+    <section className="pm-openrouter-providers" aria-label={`OpenRouter providers for ${model.displayName}`}>
       <div className="pm-openrouter-provider-head">
         <div>
           <strong>OpenRouter provider variants</strong>
-          <small>Automatic stays available. Each checked brand adds a picker choice that prefers it; OpenRouter may fall back to another provider.</small>
+          <small>Automatic stays available. Check a brand, then choose whether OpenRouter may fall back if it cannot serve the request.</small>
         </div>
         <Button variant="ghost" disabled={!apiAvailable || state?.refreshing} onClick={onReload}>
           {state?.refreshing ? "Refreshing…" : "Refresh providers"}
@@ -1431,28 +1445,54 @@ function OpenRouterProviderSelector({
       ) : providers.length ? (
         <>
           <div className="pm-openrouter-provider-list">
-            {providers.map((provider) => (
-              <label key={provider.slug} className="pm-openrouter-provider-option" data-withdrawn={!provider.advertised}>
-                <input
-                  type="checkbox"
-                  checked={selectedSet.has(provider.slug)}
-                  disabled={!apiAvailable}
-                  onChange={(event) => setSelected((current) => (
-                    event.target.checked
-                      ? [...new Set([...current, provider.slug])].sort()
-                      : current.filter((slug) => slug !== provider.slug)
-                  ))}
-                />
-                <span>
-                  <strong>{provider.name}</strong>
-                  <small>
-                    {provider.advertised
-                      ? `${provider.endpointCount} endpoint${provider.endpointCount === 1 ? "" : "s"}${provider.quantizations.length ? ` · ${provider.quantizations.join(", ")}` : ""}${provider.available ? "" : " · temporarily unavailable"}`
-                      : "No longer advertised · saved route remains usable through fallback"}
-                  </small>
-                </span>
-              </label>
-            ))}
+            {providers.map((provider) => {
+              const selectedProvider = selectedBySlug.get(provider.slug);
+              const inputId = `openrouter-provider-${safeId(model.slug)}-${safeId(provider.slug)}`;
+              return (
+                <div key={provider.slug} className="pm-openrouter-provider-option" data-withdrawn={!provider.advertised}>
+                  <input
+                    id={inputId}
+                    type="checkbox"
+                    checked={Boolean(selectedProvider)}
+                    disabled={!apiAvailable}
+                    onChange={(event) => setSelected((current) => (
+                      event.target.checked
+                        ? [
+                            ...current,
+                            {
+                              providerSlug: provider.slug,
+                              allowFallbacks: provider.allowFallbacks !== false,
+                            },
+                          ].sort((left, right) => left.providerSlug.localeCompare(right.providerSlug))
+                        : current.filter((selection) => selection.providerSlug !== provider.slug)
+                    ))}
+                  />
+                  <label htmlFor={inputId}>
+                    <strong>{provider.name}</strong>
+                    <small>
+                      {provider.advertised
+                        ? `${provider.endpointCount} endpoint${provider.endpointCount === 1 ? "" : "s"}${provider.quantizations.length ? ` · ${provider.quantizations.join(", ")}` : ""}${provider.available ? "" : " · temporarily unavailable"}`
+                        : selectedProvider?.allowFallbacks === false
+                          ? "No longer advertised · this strict route may fail until the provider returns"
+                          : "No longer advertised · saved route remains usable through fallback"}
+                    </small>
+                  </label>
+                  <select
+                    aria-label={`Fallback policy for ${provider.name}`}
+                    value={selectedProvider?.allowFallbacks === false ? "without" : "with"}
+                    disabled={!apiAvailable || !selectedProvider}
+                    onChange={(event) => setSelected((current) => current.map((selection) => (
+                      selection.providerSlug === provider.slug
+                        ? { ...selection, allowFallbacks: event.target.value === "with" }
+                        : selection
+                    )))}
+                  >
+                    <option value="with">With fallbacks</option>
+                    <option value="without">Without fallbacks</option>
+                  </select>
+                </div>
+              );
+            })}
           </div>
           <div className="pm-openrouter-provider-actions">
             <small>
@@ -1472,7 +1512,7 @@ function OpenRouterProviderSelector({
 
 function routeName(model: RouterModel, providerName: string): string {
   if (model.openrouterRouting) {
-    return `${providerName} → ${model.openrouterRouting.providerName} preferred`;
+    return `${providerName} → ${model.openrouterRouting.providerName} ${model.openrouterRouting.allowFallbacks ? "preferred" : "only"}`;
   }
   return model.provider === "openrouter" ? `${providerName} · Automatic` : providerName;
 }

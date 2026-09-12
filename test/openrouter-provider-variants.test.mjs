@@ -53,7 +53,7 @@ test("provider variant state is private, versioned, replaceable per base model, 
   ], filePath);
   replaceOpenRouterProviderVariants(
     "openrouter/deepseek-v4.1-flash",
-    [{ providerSlug: "together", providerName: "Together" }],
+    [{ providerSlug: "together", providerName: "Together", allowFallbacks: false }],
     filePath,
   );
   const parsed = JSON.parse(readFileSync(filePath, "utf8"));
@@ -63,7 +63,7 @@ test("provider variant state is private, versioned, replaceable per base model, 
       baseModel: "openrouter/deepseek-v4.1-flash",
       providerSlug: "together",
       providerName: "Together",
-      allowFallbacks: true,
+      allowFallbacks: false,
     },
     {
       baseModel: "openrouter/glm-5.3-flash",
@@ -75,18 +75,18 @@ test("provider variant state is private, versioned, replaceable per base model, 
   assert.doesNotMatch(JSON.stringify(parsed), /api[_-]?key|https?:|pricing|health/i);
 });
 
-test("unsafe, malformed, duplicate, and strict-only variant state fails closed", () => {
+test("unsafe, malformed, duplicate, and invalid fallback policy state fails closed", () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), "openrouter-variants-invalid-"));
   const malformed = path.join(directory, "malformed.json");
   writeFileSync(malformed, JSON.stringify({ version: 1, variants: [selection(), selection()] }));
   assert.equal(readOpenRouterProviderVariants(malformed).invalid, true);
 
-  const strict = path.join(directory, "strict.json");
-  writeFileSync(strict, JSON.stringify({
+  const invalidPolicy = path.join(directory, "invalid-policy.json");
+  writeFileSync(invalidPolicy, JSON.stringify({
     version: 1,
-    variants: [{ ...selection(), allowFallbacks: false }],
+    variants: [{ ...selection(), allowFallbacks: "sometimes" }],
   }));
-  assert.equal(readOpenRouterProviderVariants(strict).invalid, true);
+  assert.equal(readOpenRouterProviderVariants(invalidPolicy).invalid, true);
 
   const link = path.join(directory, "linked.json");
   symlinkSync(malformed, link);
@@ -114,6 +114,19 @@ test("materialization inherits model behavior but not native or local subagent c
     providerName: "DeepInfra",
     allowFallbacks: true,
   });
+});
+
+test("strict materialization has a distinct compatibility hash and truthful picker copy", () => {
+  const preferred = materializeOpenRouterProviderVariant(baseModel(), selection());
+  const strict = materializeOpenRouterProviderVariant(baseModel(), {
+    ...selection(),
+    allowFallbacks: false,
+  });
+  assert.equal(strict.slug, preferred.slug);
+  assert.notEqual(strict.compHash, preferred.compHash);
+  assert.equal(strict.displayName, "DeepSeek V4.1 Flash (OpenRouter · DeepInfra only)");
+  assert.match(strict.description, /restricted to DeepInfra, with fallback disabled/);
+  assert.equal(strict.openrouterRouting.allowFallbacks, false);
 });
 
 test("derived identifiers are bounded and deterministic", () => {

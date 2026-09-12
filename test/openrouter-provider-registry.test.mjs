@@ -94,13 +94,14 @@ test("user-curated OpenRouter bases can materialize provider variants", () => {
       baseModel: base.slug,
       providerSlug: "together",
       providerName: "Together",
-      allowFallbacks: true,
+      allowFallbacks: false,
     }],
   });
   const variant = result.models.find((model) => model.slug === "openrouter/custom-model-via-together");
   assert.ok(variant);
   assert.equal(variant.upstreamModel, "vendor/custom-model");
-  assert.equal(variant.displayName, "Custom Model (OpenRouter · Together preferred)");
+  assert.equal(variant.displayName, "Custom Model (OpenRouter · Together only)");
+  assert.equal(variant.openrouterRouting.allowFallbacks, false);
 });
 
 test("derived identifier collisions leave the selection inactive and diagnostic", () => {

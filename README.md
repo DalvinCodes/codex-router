@@ -1028,8 +1028,11 @@ Every registered OpenRouter chat model keeps its normal **Automatic** route.
 Expand an OpenRouter model on the Control Center's **Models** page to load the
 providers currently advertised by OpenRouter, then check only the provider
 brands that should also appear in the Codex picker. A selected brand creates a
-separate route such as `OpenRouter → DeepInfra preferred`; requests on that
-route prefer the brand and allow OpenRouter to fall back when it is unavailable.
+separate route. Choose **With fallbacks** for a route such as
+`OpenRouter → DeepInfra preferred`, or **Without fallbacks** for
+`OpenRouter → DeepInfra only`. The first prefers the brand but lets OpenRouter
+fall back when it is unavailable; the second sends only to that brand and fails
+if it cannot serve the request.
 Control Center manages those derived picker identities beneath the one base
 OpenRouter route instead of presenting duplicate route rows. Provider variants
 do not expose subagent controls because they do not inherit the base route's
@@ -1040,6 +1043,7 @@ The same workflow is available from the CLI:
 ```sh
 ./bin/control openrouter-providers list openrouter/deepseek-v4.1-flash --refresh
 ./bin/control openrouter-providers set openrouter/deepseek-v4.1-flash deepinfra,together --apply
+./bin/control openrouter-providers set openrouter/deepseek-v4.1-flash deepinfra,together --without-fallbacks=deepinfra --apply
 ./bin/control openrouter-providers set openrouter/deepseek-v4.1-flash none --apply
 ```
 
@@ -1049,9 +1053,10 @@ as one rollback-protected transaction. The owner-private
 `openrouter-provider-variants.json` state stores only the base model and selected
 provider identities; it never stores credentials, endpoint URLs, pricing, or
 transient health data. If a selected brand disappears temporarily, its route
-remains available and is marked as no longer advertised so fallback can still
-work. If the base model disappears, the selection remains inactive with a
-diagnostic until the base returns or the selection is cleared.
+remains available and is marked as no longer advertised. Routes with fallback
+enabled can still use another provider; strict routes may fail until that
+provider returns. If the base model disappears, the selection remains inactive
+with a diagnostic until the base returns or the selection is cleared.
 
 Venice API access is an entitlement, not just a key: a free Venice account has
 none. A Pro subscription (the low-rate-limit Explorer tier), a funded USD

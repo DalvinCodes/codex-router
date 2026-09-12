@@ -53,8 +53,8 @@ export function openRouterProviderVariantProblem(entry) {
     label: "OpenRouter provider name",
   });
   if (nameProblem) return nameProblem;
-  if (entry.allowFallbacks !== true) {
-    return "OpenRouter provider variants must allow fallbacks in version 1";
+  if (typeof entry.allowFallbacks !== "boolean") {
+    return "OpenRouter provider variant fallback policy is invalid";
   }
   return undefined;
 }
@@ -138,7 +138,7 @@ export function writeOpenRouterProviderVariants(
       baseModel: String(entry?.baseModel || "").trim(),
       providerSlug: String(entry?.providerSlug || "").trim().toLowerCase(),
       providerName: String(entry?.providerName || "").trim(),
-      allowFallbacks: true,
+      allowFallbacks: entry?.allowFallbacks === undefined ? true : entry.allowFallbacks,
     };
     const problem = openRouterProviderVariantProblem(value);
     if (problem) throw new Error(problem);
@@ -174,7 +174,7 @@ export function replaceOpenRouterProviderVariants(
       baseModel,
       providerSlug: entry.providerSlug,
       providerName: entry.providerName,
-      allowFallbacks: true,
+      allowFallbacks: entry.allowFallbacks === undefined ? true : entry.allowFallbacks,
     })),
   ], filePath);
 }
@@ -213,7 +213,7 @@ export function materializeOpenRouterProviderVariant(baseModel, selection) {
       baseCompHash: baseModel.compHash,
       baseModel: baseModel.slug,
       providerSlug: selection.providerSlug,
-      allowFallbacks: true,
+      allowFallbacks: selection.allowFallbacks,
     }))
     .digest("hex")
     .slice(0, 32);
@@ -226,15 +226,17 @@ export function materializeOpenRouterProviderVariant(baseModel, selection) {
     ...inherited,
     slug,
     gatewayModel,
-    displayName: `${baseDisplay} (OpenRouter · ${selection.providerName} preferred)`,
-    description: `${baseModel.description || baseDisplay} Preferred OpenRouter route through ${selection.providerName}, with fallback enabled.`,
+    displayName: `${baseDisplay} (OpenRouter · ${selection.providerName} ${selection.allowFallbacks ? "preferred" : "only"})`,
+    description: selection.allowFallbacks
+      ? `${baseModel.description || baseDisplay} Preferred OpenRouter route through ${selection.providerName}, with fallback enabled.`
+      : `${baseModel.description || baseDisplay} OpenRouter route restricted to ${selection.providerName}, with fallback disabled.`,
     compHash: `openrouter-provider-${compHash}`,
     multiAgentVersion: "v1",
     openrouterRouting: Object.freeze({
       baseModel: selection.baseModel,
       providerSlug: selection.providerSlug,
       providerName: selection.providerName,
-      allowFallbacks: true,
+      allowFallbacks: selection.allowFallbacks,
     }),
   });
 }

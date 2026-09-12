@@ -32,6 +32,22 @@ test("an OpenRouter provider variant overrides inbound routing with preferred-wi
   });
 });
 
+test("a strict OpenRouter provider variant overrides inbound routing without fallbacks", () => {
+  const payload = {
+    model: "deepseek/deepseek-v4.1-flash",
+    messages: [],
+    provider: { order: ["attacker-choice"], allow_fallbacks: true },
+  };
+  assert.equal(applyOpenRouterProviderRouting(payload, {
+    ...variant,
+    openrouterRouting: { ...variant.openrouterRouting, allowFallbacks: false },
+  }, "/chat/completions"), true);
+  assert.deepEqual(payload.provider, {
+    order: ["deepinfra"],
+    allow_fallbacks: false,
+  });
+});
+
 test("routing metadata never leaks to other providers or unsupported surfaces", () => {
   for (const [model, route] of [
     [{ ...variant, provider: "deepseek" }, "/chat/completions"],

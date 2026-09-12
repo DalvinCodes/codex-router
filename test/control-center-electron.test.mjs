@@ -1340,7 +1340,14 @@ test("preload constructs exact positional IPC payloads", async () => {
     ["discoverOpenRouterProviders", ["openrouter/model", { refresh: true }], { modelSlug: "openrouter/model", refresh: true }],
     ["setProviderEnabled", ["provider", false], { providerId: "provider", enabled: false }],
     ["addProviderModels", ["provider", ["model-a", "model-b"]], { providerId: "provider", modelIds: ["model-a", "model-b"] }],
-    ["setOpenRouterProviders", ["openrouter/model", ["deepinfra"]], { modelSlug: "openrouter/model", providerSlugs: ["deepinfra"] }],
+    [
+      "setOpenRouterProviders",
+      ["openrouter/model", [{ providerSlug: "deepinfra", allowFallbacks: false }]],
+      {
+        modelSlug: "openrouter/model",
+        selections: [{ providerSlug: "deepinfra", allowFallbacks: false }],
+      },
+    ],
     ["connectProvider", ["provider"], { providerId: "provider" }],
     ["saveProviderCredential", ["provider", "credential"], { providerId: "provider", credential: "credential" }],
     ["removeProviderCredential", ["provider"], { providerId: "provider" }],
@@ -1734,12 +1741,12 @@ test("the model directory combines provider setup with de-duplicated model-famil
   assert.match(providerModelsCss, /\.pm-filter-menu-wrap\s*\{/);
   assert.match(providerModelsCss, /\.pm-filter-menu\s*\{/);
   assert.match(models, /discoverOpenRouterProviders\(modelSlug, \{ refresh \}\)/);
-  assert.match(models, /setOpenRouterProviders\(modelSlug, providerSlugs\)/);
+  assert.match(models, /setOpenRouterProviders\(modelSlug, selections\)/);
   assert.match(models, /Automatic stays available/);
   assert.match(models, /function displayedFamilyRoutes\(routes: RouterModel\[\]\)/);
   assert.match(models, /OpenRouter provider variants do not inherit subagent certification/);
   assert.match(models, /No longer advertised/);
-  assert.match(models, /return `\$\{providerName\} → \$\{model\.openrouterRouting\.providerName\} preferred`/);
+  assert.match(models, /model\.openrouterRouting\.allowFallbacks \? "preferred" : "only"/);
   assert.match(providerModelsCss, /\.pm-openrouter-providers\s*\{/);
   assert.doesNotMatch(providerModelsCss, /\.pm-model-layout\s*\{/);
   // The removed provider accordion must not leave its styles behind.
@@ -2077,7 +2084,9 @@ test("provider writes republish all installed targets and roll selection back on
 
   const setOpenRouter = source.match(/handleAction\("setOpenRouterProviders"[\s\S]*?\n  \}\);/)?.[0];
   assert.ok(setOpenRouter, "OpenRouter provider-set handler should be readable");
-  assert.match(setOpenRouter, /\["openrouter-providers", "set", model/);
+  assert.match(setOpenRouter, /"openrouter-providers",\s*"set",\s*model/);
+  assert.match(setOpenRouter, /--without-fallbacks=/);
+  assert.match(setOpenRouter, /typeof selection\.allowFallbacks !== "boolean"/);
   assert.match(setOpenRouter, /"--apply"/);
   assert.match(setOpenRouter, /CATALOG_MUTATION_TIMEOUT_MS/);
 

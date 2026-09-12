@@ -1389,7 +1389,7 @@ async function handleOpenRouterProviders(action, modelSlug, value, flags = []) {
   if (!normalizedModel) {
     throw new Error(
       "Usage: control openrouter-providers list <model-slug> [--refresh] | " +
-        "set <model-slug> <provider-slug,...|none> --apply",
+        "set <model-slug> <provider-slug,...|none> [--without-fallbacks=<provider-slug,...>] --apply",
     );
   }
   const { discoverOpenRouterProviders } = await import("./openrouter-provider-discovery.mjs");
@@ -1403,19 +1403,40 @@ async function handleOpenRouterProviders(action, modelSlug, value, flags = []) {
   if (normalizedAction !== "set") {
     throw new Error(
       "Usage: control openrouter-providers list <model-slug> [--refresh] | " +
-        "set <model-slug> <provider-slug,...|none> --apply",
+        "set <model-slug> <provider-slug,...|none> [--without-fallbacks=<provider-slug,...>] --apply",
     );
   }
   const allFlags = new Set([value, ...flags].filter((item) => String(item).startsWith("--")));
   if (!allFlags.has("--apply")) {
     throw new Error("Saving OpenRouter provider variants requires --apply.");
   }
+  const strictFlags = [...allFlags].filter((flag) => flag.startsWith("--without-fallbacks="));
+  const unknownFlags = [...allFlags].filter((flag) => (
+    flag !== "--apply" && !flag.startsWith("--without-fallbacks=")
+  ));
+  if (strictFlags.length > 1 || unknownFlags.length) {
+    throw new Error("OpenRouter provider fallback options are invalid.");
+  }
   const rawSelection = value === "--apply" ? "" : String(value || "").trim();
   const requestedSlugs = rawSelection === "none" || rawSelection === ""
     ? []
     : [...new Set(rawSelection.split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean))];
+  const strictSlugs = strictFlags.length
+    ? [...new Set(strictFlags[0].slice("--without-fallbacks=".length)
+      .split(",").map((entry) => entry.trim().toLowerCase()).filter(Boolean))]
+    : [];
+  if (strictFlags.length && !strictSlugs.length) {
+    throw new Error("Choose at least one provider for --without-fallbacks.");
+  }
+  if (strictSlugs.some((slug) => !requestedSlugs.includes(slug))) {
+    throw new Error("Every provider without fallbacks must also be selected.");
+  }
+  const strictSet = new Set(strictSlugs);
   const { setOpenRouterProviders } = await import("./openrouter-provider-selection.mjs");
-  const result = await setOpenRouterProviders(normalizedModel, requestedSlugs);
+  const result = await setOpenRouterProviders(normalizedModel, requestedSlugs.map((providerSlug) => ({
+    providerSlug,
+    allowFallbacks: !strictSet.has(providerSlug),
+  })));
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

@@ -10,7 +10,7 @@ export function applyOpenRouterProviderRouting(payload, model, route) {
   ) return false;
   payload.provider = {
     order: [model.openrouterRouting.providerSlug],
-    allow_fallbacks: true,
+    allow_fallbacks: model.openrouterRouting.allowFallbacks,
   };
   return true;
 }

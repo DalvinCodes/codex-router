@@ -62,6 +62,39 @@ test("setOpenRouterProviders freshly validates, publishes, and selects a derived
   assert.equal(readVisibleModels().has(`${baseModel}-via-deepinfra`), true);
 });
 
+test("setOpenRouterProviders persists an explicit without-fallbacks policy", async () => {
+  const result = await setOpenRouterProviders(baseModel, [{
+    providerSlug: "deepinfra",
+    allowFallbacks: false,
+  }], {
+    discover: async () => liveProviders(),
+    transact: async ({ mutate }) => {
+      await mutate();
+      return { published: true, restarted: true };
+    },
+  });
+  assert.deepEqual(result.addedRoutes, []);
+  assert.deepEqual(result.removedRoutes, []);
+  assert.deepEqual(readOpenRouterProviderVariants().variants, [{
+    baseModel,
+    providerSlug: "deepinfra",
+    providerName: "DeepInfra",
+    allowFallbacks: false,
+  }]);
+});
+
+test("setOpenRouterProviders rejects conflicting policies for one provider", async () => {
+  await assert.rejects(
+    setOpenRouterProviders(baseModel, [
+      { providerSlug: "deepinfra", allowFallbacks: true },
+      { providerSlug: "deepinfra", allowFallbacks: false },
+    ], {
+      discover: async () => assert.fail("invalid selections must fail before discovery"),
+    }),
+    /conflicting fallback policies/,
+  );
+});
+
 test("setOpenRouterProviders refuses a concurrent same-model selection change", async () => {
   await assert.rejects(
     setOpenRouterProviders(baseModel, ["deepinfra"], {

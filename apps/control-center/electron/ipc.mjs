@@ -1535,19 +1535,47 @@ export function registerIpcHandlers({
     );
     return { provider: id, added: unique };
   });
-  handleAction("setOpenRouterProviders", async ({ modelSlug, providerSlugs } = {}) => {
+  handleAction("setOpenRouterProviders", async ({ modelSlug, selections } = {}) => {
     const model = await validateModel(modelSlug);
-    if (!Array.isArray(providerSlugs) || providerSlugs.length > 200) {
+    if (!Array.isArray(selections) || selections.length > 200) {
       throw new Error("Choose no more than 200 OpenRouter providers.");
     }
-    const unique = [...new Set(providerSlugs.map((slug) => (
-      stringValue(slug, "OpenRouter provider", OPENROUTER_PROVIDER_ID).toLowerCase()
-    )))];
-    if (unique.length !== providerSlugs.length) {
+    const normalized = selections.map((selection) => {
+      if (
+        !selection ||
+        typeof selection !== "object" ||
+        Array.isArray(selection) ||
+        Object.keys(selection).some((key) => !["providerSlug", "allowFallbacks"].includes(key)) ||
+        typeof selection.allowFallbacks !== "boolean"
+      ) {
+        throw new Error("OpenRouter provider fallback policy is invalid.");
+      }
+      return {
+        providerSlug: stringValue(
+          selection.providerSlug,
+          "OpenRouter provider",
+          OPENROUTER_PROVIDER_ID,
+        ).toLowerCase(),
+        allowFallbacks: selection.allowFallbacks,
+      };
+    });
+    const unique = new Set(normalized.map((selection) => selection.providerSlug));
+    if (unique.size !== normalized.length) {
       throw new Error("OpenRouter provider slugs must be unique.");
     }
+    const providerSlugs = normalized.map((selection) => selection.providerSlug);
+    const strictSlugs = normalized
+      .filter((selection) => !selection.allowFallbacks)
+      .map((selection) => selection.providerSlug);
     return runJson(
-      ["openrouter-providers", "set", model, unique.length ? unique.join(",") : "none", "--apply"],
+      [
+        "openrouter-providers",
+        "set",
+        model,
+        providerSlugs.length ? providerSlugs.join(",") : "none",
+        ...(strictSlugs.length ? [`--without-fallbacks=${strictSlugs.join(",")}`] : []),
+        "--apply",
+      ],
       { timeoutMs: CATALOG_MUTATION_TIMEOUT_MS },
     );
   });

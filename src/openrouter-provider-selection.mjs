@@ -13,15 +13,36 @@ import {
 import { OPENROUTER_PROVIDER_VARIANTS_PATH } from "./paths.mjs";
 import { clearSubagentProof, SUBAGENT_PROOFS_PATH } from "./subagent-proofs.mjs";
 
-function normalizedProviderSlugs(providerSlugs) {
-  if (!Array.isArray(providerSlugs)) {
+function normalizedProviderSelections(providerSelections) {
+  if (!Array.isArray(providerSelections)) {
     throw new Error("OpenRouter provider selections must be an array.");
   }
-  const values = [...new Set(
-    providerSlugs.map((entry) => String(entry || "").trim().toLowerCase()).filter(Boolean),
-  )];
-  if (values.some((slug) => !OPENROUTER_PROVIDER_SLUG.test(slug))) {
-    throw new Error("One or more OpenRouter provider slugs are invalid.");
+  const values = [];
+  const bySlug = new Map();
+  for (const entry of providerSelections) {
+    const objectEntry = entry && typeof entry === "object" && !Array.isArray(entry);
+    if (
+      objectEntry &&
+      Object.keys(entry).some((key) => !["providerSlug", "allowFallbacks"].includes(key))
+    ) {
+      throw new Error("OpenRouter provider selection contains an unsupported field.");
+    }
+    const providerSlug = String(objectEntry ? entry.providerSlug : entry || "").trim().toLowerCase();
+    const allowFallbacks = objectEntry ? entry.allowFallbacks : true;
+    if (!OPENROUTER_PROVIDER_SLUG.test(providerSlug)) {
+      throw new Error("One or more OpenRouter provider slugs are invalid.");
+    }
+    if (typeof allowFallbacks !== "boolean") {
+      throw new Error(`OpenRouter provider ${providerSlug} has an invalid fallback policy.`);
+    }
+    if (bySlug.has(providerSlug)) {
+      if (bySlug.get(providerSlug) !== allowFallbacks) {
+        throw new Error(`OpenRouter provider ${providerSlug} has conflicting fallback policies.`);
+      }
+      continue;
+    }
+    bySlug.set(providerSlug, allowFallbacks);
+    values.push({ providerSlug, allowFallbacks });
   }
   return values;
 }
@@ -42,7 +63,7 @@ function selectedStateFor(state, baseModel) {
 // deliberately completed before the overlay lock, while an optimistic state
 // check inside the transaction prevents a concurrent same-model selection from
 // being overwritten by choices based on an older provider list.
-export async function setOpenRouterProviders(modelSlug, providerSlugs, {
+export async function setOpenRouterProviders(modelSlug, providerSelections, {
   discover = discoverOpenRouterProviders,
   models = MODELS,
   modelBySlug = MODEL_BY_SLUG,
@@ -51,7 +72,8 @@ export async function setOpenRouterProviders(modelSlug, providerSlugs, {
 } = {}) {
   const normalizedModel = String(modelSlug || "").trim();
   if (!normalizedModel) throw new Error("An OpenRouter model slug is required.");
-  const requestedSlugs = normalizedProviderSlugs(providerSlugs);
+  const requested = normalizedProviderSelections(providerSelections);
+  const requestedSlugs = requested.map((entry) => entry.providerSlug);
 
   const currentState = readOpenRouterProviderVariants(variantsPath);
   if (currentState.invalid) {
@@ -84,7 +106,7 @@ export async function setOpenRouterProviders(modelSlug, providerSlugs, {
       .filter((provider) => provider.advertised)
       .map((provider) => [provider.slug, provider]),
   );
-  const selections = requestedSlugs.map((providerSlug) => {
+  const selections = requested.map(({ providerSlug, allowFallbacks }) => {
     const live = advertised.get(providerSlug);
     const retained = existing.get(providerSlug);
     if (!live && !retained) {
@@ -93,7 +115,7 @@ export async function setOpenRouterProviders(modelSlug, providerSlugs, {
     return {
       providerSlug,
       providerName: live?.name || retained.providerName,
-      allowFallbacks: true,
+      allowFallbacks,
     };
   });
 

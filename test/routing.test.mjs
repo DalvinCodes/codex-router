@@ -4645,12 +4645,20 @@ function curatedOpenRouterModels() {
   );
   writeFileSync(variantsFile, JSON.stringify({
     version: 1,
-    variants: [{
-      baseModel: "openrouter/openai/gpt-5.3",
-      providerSlug: "deepinfra",
-      providerName: "DeepInfra",
-      allowFallbacks: true,
-    }],
+    variants: [
+      {
+        baseModel: "openrouter/openai/gpt-5.3",
+        providerSlug: "deepinfra",
+        providerName: "DeepInfra",
+        allowFallbacks: true,
+      },
+      {
+        baseModel: "openrouter/openai/gpt-5.3",
+        providerSlug: "together",
+        providerName: "Together",
+        allowFallbacks: false,
+      },
+    ],
   }), "utf8");
   return {
     dir,
@@ -4659,6 +4667,7 @@ function curatedOpenRouterModels() {
     restricted: "openrouter-qwen-qwen3-8-max",
     unrestricted: "openrouter-openai-gpt-5-3",
     preferred: "openrouter-openai-gpt-5-3-via-deepinfra",
+    strict: "openrouter-openai-gpt-5-3-via-together",
     strictSchema: "openrouter-vendor-strict-schema",
     ordinarySchema: "openrouter-vendor-ordinary-schema",
     embeddings: "openrouter-vendor-embedding-only",
@@ -4668,7 +4677,7 @@ function curatedOpenRouterModels() {
   };
 }
 
-test("API forwarder sends exact OpenRouter Automatic and preferred-provider bodies", async () => {
+test("API forwarder sends exact OpenRouter Automatic, preferred, and strict-provider bodies", async () => {
   const upstreamRequests = [];
   const upstream = await mockServer(async (request, response) => {
     upstreamRequests.push(await bodyJson(request));
@@ -4712,13 +4721,28 @@ test("API forwarder sends exact OpenRouter Automatic and preferred-provider bodi
       }),
     });
     assert.equal(preferred.status, 200, forwarder.testErrors());
-    assert.equal(upstreamRequests.length, 2);
+    const strict = await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: curated.strict,
+        ...common,
+        provider: { order: ["caller-choice"], allow_fallbacks: true },
+      }),
+    });
+    assert.equal(strict.status, 200, forwarder.testErrors());
+    assert.equal(upstreamRequests.length, 3);
     assert.equal(upstreamRequests[0].model, "openai/gpt-5.3");
     assert.equal("provider" in upstreamRequests[0], false);
     assert.equal(upstreamRequests[1].model, "openai/gpt-5.3");
     assert.deepEqual(upstreamRequests[1].provider, {
       order: ["deepinfra"],
       allow_fallbacks: true,
+    });
+    assert.equal(upstreamRequests[2].model, "openai/gpt-5.3");
+    assert.deepEqual(upstreamRequests[2].provider, {
+      order: ["together"],
+      allow_fallbacks: false,
     });
     for (const request of upstreamRequests) {
       assert.equal(request.stream, false);

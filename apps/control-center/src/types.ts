@@ -65,6 +65,13 @@ export interface OpenRouterProviderOption {
   available: boolean;
   advertised: boolean;
   selected: boolean;
+  /** Saved policy when selected; new selections default to allowing fallbacks. */
+  allowFallbacks: boolean;
+}
+
+export interface OpenRouterProviderSelection {
+  providerSlug: string;
+  allowFallbacks: boolean;
 }
 
 export interface OpenRouterProviderDiscovery {
@@ -777,7 +784,7 @@ export interface RouterControlApi {
   refreshAll(): Promise<unknown>;
   setProviderEnabled(provider: string, enabled: boolean): Promise<unknown>;
   addProviderModels(provider: string, modelIds: string[]): Promise<unknown>;
-  setOpenRouterProviders(modelSlug: string, providerSlugs: string[]): Promise<unknown>;
+  setOpenRouterProviders(modelSlug: string, selections: OpenRouterProviderSelection[]): Promise<unknown>;
   connectProvider(provider: string): Promise<unknown>;
   saveProviderCredential(provider: string, credential: string): Promise<unknown>;
   removeProviderCredential(provider: string): Promise<unknown>;

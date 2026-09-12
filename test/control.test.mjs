@@ -1109,7 +1109,7 @@ test("aggregate overview preserves safe OpenRouter variant metadata for Control 
           baseModel: "openrouter/deepseek-v4.1-flash",
           providerSlug: "deepseek",
           providerName: "DeepSeek",
-          allowFallbacks: true,
+          allowFallbacks: false,
         }],
       })}\n`,
       { mode: 0o600 },
@@ -1132,7 +1132,7 @@ test("aggregate overview preserves safe OpenRouter variant metadata for Control 
       baseModel: "openrouter/deepseek-v4.1-flash",
       providerSlug: "deepseek",
       providerName: "DeepSeek",
-      allowFallbacks: true,
+      allowFallbacks: false,
     });
   } finally {
     rmSync(stateDir, { recursive: true, force: true });
