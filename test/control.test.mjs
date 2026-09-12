@@ -1092,6 +1092,53 @@ test("aggregate overview exposes the router-owned catalog separately from client
   }
 });
 
+test("aggregate overview preserves safe OpenRouter variant metadata for Control Center", () => {
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), "control-openrouter-variant-"));
+  try {
+    writeFileSync(
+      path.join(stateDir, "enabled-providers.json"),
+      `${JSON.stringify({ version: 1, providers: ["openrouter"] })}\n`,
+      { mode: 0o600 },
+    );
+    writeFileSync(path.join(stateDir, "openrouter-api-key.secret"), "test-openrouter-key\n", { mode: 0o600 });
+    writeFileSync(
+      path.join(stateDir, "openrouter-provider-variants.json"),
+      `${JSON.stringify({
+        version: 1,
+        variants: [{
+          baseModel: "openrouter/deepseek-v4.1-flash",
+          providerSlug: "deepseek",
+          providerName: "DeepSeek",
+          allowFallbacks: true,
+        }],
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const output = execFileSync(process.execPath, [path.join(root, "src", "control.mjs"), "--json"], {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CODEX_HOME: stateDir,
+        MODEL_ROUTER_STATE_DIR: stateDir,
+      },
+    });
+    const models = JSON.parse(output).catalog.models;
+    const automatic = models.find((model) => model.slug === "openrouter/deepseek-v4.1-flash");
+    const variant = models.find((model) => model.slug === "openrouter/deepseek-v4.1-flash-via-deepseek");
+    assert.ok(automatic);
+    assert.equal(automatic.openrouterRouting, undefined);
+    assert.deepEqual(variant?.openrouterRouting, {
+      baseModel: "openrouter/deepseek-v4.1-flash",
+      providerSlug: "deepseek",
+      providerName: "DeepSeek",
+      allowFallbacks: true,
+    });
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("the harness target appears only once its route has been published", () => {
   const stateDir = mkdtempSync(path.join(os.tmpdir(), "control-targets-dsh-"));
   try {

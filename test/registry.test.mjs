@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,10 +8,11 @@ import test from "node:test";
 // curated models (including any local Ollama models the operator has checked)
 // must not leak in. Point the overlay at an empty directory before the registry
 // loads, which is why the imports below are dynamic.
-process.env.MODEL_ROUTER_USER_MODELS = path.join(
-  mkdtempSync(path.join(os.tmpdir(), "registry-test-")),
-  "user-models.json",
-);
+const registryTestState = mkdtempSync(path.join(os.tmpdir(), "registry-test-"));
+process.env.MODEL_ROUTER_STATE_DIR = registryTestState;
+process.env.CODEX_ROUTER_STATE_DIR = registryTestState;
+process.env.MODEL_ROUTER_USER_MODELS = path.join(registryTestState, "user-models.json");
+test.after(() => rmSync(registryTestState, { recursive: true, force: true }));
 
 const { renderLiteLlmConfig } = await import("../src/litellm-config.mjs");
 const {

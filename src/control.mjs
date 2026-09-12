@@ -530,6 +530,9 @@ async function routerCatalogSnapshot() {
     ...(Number.isFinite(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
     ...(Array.isArray(model.inputModalities) ? { inputModalities: model.inputModalities } : {}),
     ...reasoningLevelField(model.reasoningLevels),
+    ...(model.openrouterRouting
+      ? { openrouterRouting: { ...model.openrouterRouting } }
+      : {}),
   }));
   const availableSlugs = new Set(models.map((model) => model.slug));
   // Research inventory is intentionally separate from the routable catalog.

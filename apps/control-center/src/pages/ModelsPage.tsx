@@ -149,6 +149,15 @@ function routeUsable(model: RouterModel): boolean {
   return model.available !== false;
 }
 
+// An OpenRouter provider variant is a Codex picker identity owned by the base
+// route's provider selector, not a second operator-managed route. Keeping it
+// out of the route table prevents duplicate OpenRouter rows and prevents the
+// generic route controls from offering capabilities variants cannot inherit.
+function displayedFamilyRoutes(routes: RouterModel[]): RouterModel[] {
+  const baseRoutes = routes.filter((model) => !model.openrouterRouting);
+  return baseRoutes.length ? baseRoutes : routes;
+}
+
 export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dataReady, onRefresh, runAction, focusRequest }: ModelsPageProps) {
   const [modelSearch, setModelSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -1175,15 +1184,16 @@ function ModelFamilyRow({
   onSaveOpenRouter: (modelSlug: string, providerSlugs: string[]) => void;
   onConnect: (providerId: string) => void;
 }) {
-  const preferred = preferredFamilyRoute(family);
+  const displayedRoutes = displayedFamilyRoutes(family.routes);
+  const preferred = preferredFamilyRoute({ ...family, routes: displayedRoutes });
   const maker = brandForModel(preferred);
-  const providerIds = [...new Set(family.routes.map((model) => model.provider))];
-  const multiRoute = family.routes.length > 1;
+  const providerIds = [...new Set(displayedRoutes.map((model) => model.provider))];
+  const multiRoute = displayedRoutes.length > 1;
   const blocked = usable.length === 0;
   const managedByClient = usable.length > 0 && usable.every(nativeClientManaged);
   const triggerId = `family-trigger-${safeId(family.id)}`;
   const panelId = `family-panel-${safeId(family.id)}`;
-  const openRouterBase = family.routes.find((model) => (
+  const openRouterBase = displayedRoutes.find((model) => (
     model.provider === "openrouter" && !model.openrouterRouting && routeUsable(model)
   ));
 
@@ -1192,9 +1202,9 @@ function ModelFamilyRow({
   const facts = [
     providerIds.length > 1 ? `${providerIds.length} providers` : providerNames.get(providerIds[0]) || maker.name,
     preferred?.contextWindow ? formatContext(preferred.contextWindow) : undefined,
-    family.routes.some((model) => model.inputModalities?.includes("image")) ? "Text + image" : "Text",
-    family.routes.some((model) => model.isFree) ? "Free" : undefined,
-    multiRoute ? `${family.routes.length} routes` : undefined,
+    displayedRoutes.some((model) => model.inputModalities?.includes("image")) ? "Text + image" : "Text",
+    displayedRoutes.some((model) => model.isFree) ? "Free" : undefined,
+    multiRoute ? `${displayedRoutes.length} routes` : undefined,
   ].filter(Boolean);
 
   return (
@@ -1253,7 +1263,7 @@ function ModelFamilyRow({
                 <span>Subagents</span>
                 <span>Thinking</span>
               </div>
-              {family.routes.map((model) => (
+              {displayedRoutes.map((model) => (
                 <ModelRouteRow
                   key={model.slug}
                   model={model}
@@ -1285,13 +1295,13 @@ function ModelFamilyRow({
           // the panel carries only what the summary had to leave out.
           <>
             <ModelDetails
-              model={family.routes[0]}
-              providerName={providerNames.get(family.routes[0].provider) || providerDisplayName(family.routes[0].provider)}
-              selectedInSettings={subagentValue(family.routes[0])}
-              subagentEffort={effortValue(family.routes[0])}
+              model={displayedRoutes[0]}
+              providerName={providerNames.get(displayedRoutes[0].provider) || providerDisplayName(displayedRoutes[0].provider)}
+              selectedInSettings={subagentValue(displayedRoutes[0])}
+              subagentEffort={effortValue(displayedRoutes[0])}
               apiAvailable={apiAvailable}
-              onSubagentChange={(checked) => onSubagent(family.routes[0], checked)}
-              onEffortChange={(effort) => onEffort(family.routes[0], effort)}
+              onSubagentChange={(checked) => onSubagent(displayedRoutes[0], checked)}
+              onEffortChange={(effort) => onEffort(displayedRoutes[0], effort)}
             />
             {openRouterBase ? (
               <OpenRouterProviderSelector
@@ -1402,7 +1412,7 @@ function OpenRouterProviderSelector({
       <div className="pm-openrouter-provider-head">
         <div>
           <strong>OpenRouter provider variants</strong>
-          <small>Automatic stays available. Checked brands appear as additional picker routes with fallback enabled.</small>
+          <small>Automatic stays available. Each checked brand adds a picker choice that prefers it; OpenRouter may fall back to another provider.</small>
         </div>
         <Button variant="ghost" disabled={!apiAvailable || state?.refreshing} onClick={onReload}>
           {state?.refreshing ? "Refreshing…" : "Refresh providers"}
@@ -1475,10 +1485,20 @@ function routeName(model: RouterModel, providerName: string): string {
 //
 // A registry-proven route and one the operator chose look the same here on
 // purpose: both are spawnable, and which of the two it is belongs in the
-// application record, not in front of someone picking a model.
+// application record, not in front of someone picking a model. OpenRouter
+// provider variants are the exception: their picker identity cannot inherit
+// the base route's certification.
 function subagentControl(model: RouterModel, selectedInSettings: boolean) {
+  if (model.openrouterRouting) {
+    return {
+      checked: false,
+      disabled: true,
+      hint: "OpenRouter provider variants do not inherit subagent certification.",
+    };
+  }
   return {
     checked: selectedInSettings,
+    disabled: false,
     hint: subagentCertification(model) === "v2"
       ? "Codex can spawn subagents on this route."
       : "Switch on to let Codex spawn subagents on this route. Verify it with an agent check before relying on it.",
@@ -1597,7 +1617,7 @@ function SubagentToggle({
     <div className="pm-model-control" title={subagent.hint}>
       <Toggle
         checked={subagent.checked}
-        disabled={!apiAvailable}
+        disabled={!apiAvailable || subagent.disabled}
         label={`Use ${model.displayName} through ${providerName} as a subagent`}
         onChange={onSubagentChange}
       />

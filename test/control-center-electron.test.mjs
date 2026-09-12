@@ -1736,6 +1736,8 @@ test("the model directory combines provider setup with de-duplicated model-famil
   assert.match(models, /discoverOpenRouterProviders\(modelSlug, \{ refresh \}\)/);
   assert.match(models, /setOpenRouterProviders\(modelSlug, providerSlugs\)/);
   assert.match(models, /Automatic stays available/);
+  assert.match(models, /function displayedFamilyRoutes\(routes: RouterModel\[\]\)/);
+  assert.match(models, /OpenRouter provider variants do not inherit subagent certification/);
   assert.match(models, /No longer advertised/);
   assert.match(models, /return `\$\{providerName\} → \$\{model\.openrouterRouting\.providerName\} preferred`/);
   assert.match(providerModelsCss, /\.pm-openrouter-providers\s*\{/);

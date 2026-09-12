@@ -863,7 +863,10 @@ test("the production renderer exposes model discovery and picker actions", { tim
     await page.waitForFunction(() => window.routerControlTest.calls()
       .filter((call) => call.name === "discoverOpenRouterProviders").length >= 2);
     assert.match(await openRouterFamily.innerText(), /OpenRouter · Automatic/);
-    assert.match(await openRouterFamily.innerText(), /OpenRouter → Old Host preferred/);
+    assert.equal(await openRouterFamily.locator(".pm-route-row").count(), 0);
+    assert.doesNotMatch(await openRouterFamily.innerText(), /OpenRouter → Old Host preferred/);
+    assert.doesNotMatch(await openRouterFamily.innerText(), /via-oldhost/);
+    assert.match(await openRouterFamily.innerText(), /OpenRouter may fall back to another provider/);
     const deepInfra = openRouterFamily.locator(".pm-openrouter-provider-option").filter({ hasText: "DeepInfra" });
     const oldHost = openRouterFamily.locator(".pm-openrouter-provider-option").filter({ hasText: "Old Host" });
     assert.equal(await deepInfra.locator('input[type="checkbox"]').isChecked(), false);

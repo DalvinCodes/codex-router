@@ -1030,6 +1030,10 @@ providers currently advertised by OpenRouter, then check only the provider
 brands that should also appear in the Codex picker. A selected brand creates a
 separate route such as `OpenRouter → DeepInfra preferred`; requests on that
 route prefer the brand and allow OpenRouter to fall back when it is unavailable.
+Control Center manages those derived picker identities beneath the one base
+OpenRouter route instead of presenting duplicate route rows. Provider variants
+do not expose subagent controls because they do not inherit the base route's
+subagent certification.
 
 The same workflow is available from the CLI:
 
