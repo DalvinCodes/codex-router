@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Check, ChevronDown, Filter, KeyRound, Link2, LogIn, MoreHorizontal, Plus, SearchX, ShieldCheck, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, Filter, KeyRound, Link2, LogIn, MoreHorizontal, Plus, SearchX, ShieldCheck, Trash2, X } from "lucide-react";
 import { Badge, Button, CatalogSkeleton, Dialog, EmptyState, PageHeader, PanelSkeleton, SearchField, SkeletonBlock, Toggle } from "../components";
 import { BrandLogo, ProviderLogo, brandForModel } from "../provider-branding";
 import { formatContext, formatDateTime } from "../lib";
@@ -159,10 +159,8 @@ function displayedFamilyRoutes(routes: RouterModel[]): RouterModel[] {
   return baseRoutes.length ? baseRoutes : routes;
 }
 
-function openRouterSelectionKey(selections: OpenRouterProviderSelection[]): string {
-  return selections
-    .map((selection) => `${selection.providerSlug}:${selection.allowFallbacks ? "with" : "without"}`)
-    .join("\0");
+function openRouterSelectionKey(selection: OpenRouterProviderSelection): string {
+  return `${selection.providerOrder.join("\0")}:${selection.allowFallbacks ? "with" : "without"}`;
 }
 
 export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dataReady, onRefresh, runAction, focusRequest }: ModelsPageProps) {
@@ -655,13 +653,13 @@ export function ModelsPage({ target, catalog, setup, usage, api, refreshing, dat
     ? optimisticSubagentEfforts.mutate(slug, effort, `Set ${slug} subagent thinking to ${effortLabel(effort)}`, () => api.setSubagentEffort(slug, effort))
     : Promise.resolve();
 
-  const saveOpenRouterProviders = async (modelSlug: string, selections: OpenRouterProviderSelection[]) => {
+  const saveOpenRouterProviders = async (modelSlug: string, selection: OpenRouterProviderSelection) => {
     if (!api) return;
     let saved = false;
     await runAction(
       `Update OpenRouter providers for ${modelSlug}`,
       async () => {
-        await api.setOpenRouterProviders(modelSlug, selections);
+        await api.setOpenRouterProviders(modelSlug, selection);
         saved = true;
       },
     );
@@ -1188,7 +1186,7 @@ function ModelFamilyRow({
   onEffort: (model: RouterModel, effort: string) => void;
   openRouterProviderState?: OpenRouterProviderViewState;
   onReloadOpenRouter: (modelSlug: string) => void;
-  onSaveOpenRouter: (modelSlug: string, selections: OpenRouterProviderSelection[]) => void;
+  onSaveOpenRouter: (modelSlug: string, selection: OpenRouterProviderSelection) => void;
   onConnect: (providerId: string) => void;
 }) {
   const displayedRoutes = displayedFamilyRoutes(family.routes);
@@ -1400,33 +1398,55 @@ function OpenRouterProviderSelector({
   state?: OpenRouterProviderViewState;
   apiAvailable: boolean;
   onReload: () => void;
-  onSave: (selections: OpenRouterProviderSelection[]) => void;
+  onSave: (selection: OpenRouterProviderSelection) => void;
 }) {
-  const [selected, setSelected] = useState<OpenRouterProviderSelection[]>([]);
+  const [selected, setSelected] = useState<OpenRouterProviderSelection>({
+    providerOrder: [],
+    allowFallbacks: true,
+  });
   const providers = state?.data?.providers ?? [];
   const storedSelection = useMemo(
-    () => providers
-      .filter((provider) => provider.selected)
-      .map((provider) => ({
-        providerSlug: provider.slug,
-        allowFallbacks: provider.allowFallbacks !== false,
-      }))
-      .sort((left, right) => left.providerSlug.localeCompare(right.providerSlug)),
-    [providers],
+    () => ({
+      providerOrder: state?.data?.selection?.providerOrder || providers
+        .filter((provider) => provider.selected)
+        .sort((left, right) => (left.priority ?? Number.MAX_SAFE_INTEGER) - (right.priority ?? Number.MAX_SAFE_INTEGER))
+        .map((provider) => provider.slug),
+      allowFallbacks: state?.data?.selection?.allowFallbacks ?? true,
+    }),
+    [providers, state?.data?.selection],
   );
   const storedSelectionKey = openRouterSelectionKey(storedSelection);
   useEffect(() => {
     setSelected(storedSelection);
   }, [model.slug, state?.data?.fetchedAt, storedSelectionKey]);
-  const selectedBySlug = new Map(selected.map((selection) => [selection.providerSlug, selection]));
+  const providerBySlug = new Map(providers.map((provider) => [provider.slug, provider]));
+  const priorityBySlug = new Map(selected.providerOrder.map((providerSlug, index) => [providerSlug, index + 1]));
   const dirty = openRouterSelectionKey(selected) !== storedSelectionKey;
+  const moveProvider = (providerSlug: string, direction: -1 | 1) => {
+    setSelected((current) => {
+      const from = current.providerOrder.indexOf(providerSlug);
+      const to = from + direction;
+      if (from < 0 || to < 0 || to >= current.providerOrder.length) return current;
+      const providerOrder = [...current.providerOrder];
+      [providerOrder[from], providerOrder[to]] = [providerOrder[to], providerOrder[from]];
+      return { ...current, providerOrder };
+    });
+  };
+  const removeProvider = (providerSlug: string) => setSelected((current) => ({
+    ...current,
+    providerOrder: current.providerOrder.filter((slug) => slug !== providerSlug),
+  }));
+  const providerName = (providerSlug: string) => providerBySlug.get(providerSlug)?.name || providerSlug;
+  const chainText = selected.providerOrder.length
+    ? `${selected.providerOrder.map(providerName).join(" → ")} → ${selected.allowFallbacks ? "OpenRouter automatic" : "Stop"}`
+    : "Automatic only — no custom provider route";
 
   return (
     <section className="pm-openrouter-providers" aria-label={`OpenRouter providers for ${model.displayName}`}>
       <div className="pm-openrouter-provider-head">
         <div>
-          <strong>OpenRouter provider variants</strong>
-          <small>Automatic stays available. Check a brand, then choose whether OpenRouter may fall back if it cannot serve the request.</small>
+          <strong>OpenRouter routing order</strong>
+          <small>Automatic stays available. This list creates one custom route and tries provider #1 first.</small>
         </div>
         <Button variant="ghost" disabled={!apiAvailable || state?.refreshing} onClick={onReload}>
           {state?.refreshing ? "Refreshing…" : "Refresh providers"}
@@ -1444,52 +1464,142 @@ function OpenRouterProviderSelector({
         </div>
       ) : providers.length ? (
         <>
+          <div className="pm-openrouter-priority">
+            <div className="pm-openrouter-section-head">
+              <div>
+                <strong>Routing priority</strong>
+                <small>Move providers until this list matches the exact order you want requests attempted.</small>
+              </div>
+              <span>{selected.providerOrder.length} selected</span>
+            </div>
+            {selected.providerOrder.length ? (
+              <ol className="pm-openrouter-priority-list">
+                {selected.providerOrder.map((providerSlug, index) => {
+                  const provider = providerBySlug.get(providerSlug);
+                  const name = providerName(providerSlug);
+                  return (
+                    <li key={providerSlug} data-withdrawn={provider?.advertised === false}>
+                      <span className="pm-openrouter-priority-number" aria-label={`Priority ${index + 1}`}>{index + 1}</span>
+                      <span className="pm-openrouter-priority-copy">
+                        <strong>{name}</strong>
+                        <small>
+                          {provider?.advertised === false
+                            ? "No longer advertised; the saved position is preserved"
+                            : index === 0
+                              ? "Primary provider — attempted first"
+                              : `Attempted if priorities 1–${index} cannot serve the request`}
+                        </small>
+                      </span>
+                      <span className="pm-openrouter-priority-controls">
+                        <button
+                          type="button"
+                          disabled={!apiAvailable || index === 0}
+                          aria-label={`Move ${name} up`}
+                          title="Move up"
+                          onClick={() => moveProvider(providerSlug, -1)}
+                        >
+                          <ArrowUp size={14} aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!apiAvailable || index === selected.providerOrder.length - 1}
+                          aria-label={`Move ${name} down`}
+                          title="Move down"
+                          onClick={() => moveProvider(providerSlug, 1)}
+                        >
+                          <ArrowDown size={14} aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!apiAvailable}
+                          aria-label={`Remove ${name} from routing order`}
+                          title="Remove"
+                          onClick={() => removeProvider(providerSlug)}
+                        >
+                          <X size={14} aria-hidden />
+                        </button>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <div className="pm-openrouter-priority-empty">
+                Add providers below to create a custom ordered route. The Automatic route remains unchanged.
+              </div>
+            )}
+            <div className="pm-openrouter-chain" aria-label="Effective OpenRouter routing order">
+              <span>Effective order</span>
+              <strong>{chainText}</strong>
+            </div>
+            <fieldset className="pm-openrouter-fallback-policy" disabled={!apiAvailable || !selected.providerOrder.length}>
+              <legend>After the selected providers</legend>
+              <label data-selected={!selected.allowFallbacks}>
+                <input
+                  type="radio"
+                  name={`openrouter-fallback-${safeId(model.slug)}`}
+                  checked={!selected.allowFallbacks}
+                  onChange={() => setSelected((current) => ({ ...current, allowFallbacks: false }))}
+                />
+                <span>
+                  <strong>Stop after this list</strong>
+                  <small>Only the numbered providers may serve the request.</small>
+                </span>
+              </label>
+              <label data-selected={selected.allowFallbacks}>
+                <input
+                  type="radio"
+                  name={`openrouter-fallback-${safeId(model.slug)}`}
+                  checked={selected.allowFallbacks}
+                  onChange={() => setSelected((current) => ({ ...current, allowFallbacks: true }))}
+                />
+                <span>
+                  <strong>Continue with OpenRouter automatic</strong>
+                  <small>After this list, OpenRouter may choose another available provider.</small>
+                </span>
+              </label>
+            </fieldset>
+          </div>
+          <div className="pm-openrouter-section-head pm-openrouter-available-head">
+            <div>
+              <strong>Available providers</strong>
+              <small>Adding a provider places it at the end of the routing priority.</small>
+            </div>
+          </div>
           <div className="pm-openrouter-provider-list">
             {providers.map((provider) => {
-              const selectedProvider = selectedBySlug.get(provider.slug);
-              const inputId = `openrouter-provider-${safeId(model.slug)}-${safeId(provider.slug)}`;
+              const priority = priorityBySlug.get(provider.slug);
               return (
-                <div key={provider.slug} className="pm-openrouter-provider-option" data-withdrawn={!provider.advertised}>
-                  <input
-                    id={inputId}
-                    type="checkbox"
-                    checked={Boolean(selectedProvider)}
-                    disabled={!apiAvailable}
-                    onChange={(event) => setSelected((current) => (
-                      event.target.checked
-                        ? [
-                            ...current,
-                            {
-                              providerSlug: provider.slug,
-                              allowFallbacks: provider.allowFallbacks !== false,
-                            },
-                          ].sort((left, right) => left.providerSlug.localeCompare(right.providerSlug))
-                        : current.filter((selection) => selection.providerSlug !== provider.slug)
-                    ))}
-                  />
-                  <label htmlFor={inputId}>
+                <div
+                  key={provider.slug}
+                  className="pm-openrouter-provider-option"
+                  data-withdrawn={!provider.advertised}
+                  data-selected={Boolean(priority)}
+                >
+                  <span className="pm-openrouter-provider-copy">
                     <strong>{provider.name}</strong>
                     <small>
                       {provider.advertised
                         ? `${provider.endpointCount} endpoint${provider.endpointCount === 1 ? "" : "s"}${provider.quantizations.length ? ` · ${provider.quantizations.join(", ")}` : ""}${provider.available ? "" : " · temporarily unavailable"}`
-                        : selectedProvider?.allowFallbacks === false
-                          ? "No longer advertised · this strict route may fail until the provider returns"
-                          : "No longer advertised · saved route remains usable through fallback"}
+                        : "No longer advertised · saved priority is preserved"}
                     </small>
-                  </label>
-                  <select
-                    aria-label={`Fallback policy for ${provider.name}`}
-                    value={selectedProvider?.allowFallbacks === false ? "without" : "with"}
-                    disabled={!apiAvailable || !selectedProvider}
-                    onChange={(event) => setSelected((current) => current.map((selection) => (
-                      selection.providerSlug === provider.slug
-                        ? { ...selection, allowFallbacks: event.target.value === "with" }
-                        : selection
-                    )))}
-                  >
-                    <option value="with">With fallbacks</option>
-                    <option value="without">Without fallbacks</option>
-                  </select>
+                  </span>
+                  {priority ? (
+                    <span className="pm-openrouter-provider-priority">Priority {priority}</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className="pm-openrouter-provider-add"
+                      disabled={!apiAvailable || !provider.advertised}
+                      aria-label={`Add ${provider.name} to routing order`}
+                      onClick={() => setSelected((current) => ({
+                        ...current,
+                        providerOrder: [...current.providerOrder, provider.slug],
+                      }))}
+                    >
+                      <Plus size={12} aria-hidden /> Add
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -1499,7 +1609,7 @@ function OpenRouterProviderSelector({
               {state?.data?.cached ? "Cached" : "Live"} inventory · {formatDateTime(state?.data?.fetchedAt)}
             </small>
             <Button variant="primary" disabled={!apiAvailable || !dirty} onClick={() => onSave(selected)}>
-              Save picker variants
+              Save provider order
             </Button>
           </div>
         </>
@@ -1512,7 +1622,10 @@ function OpenRouterProviderSelector({
 
 function routeName(model: RouterModel, providerName: string): string {
   if (model.openrouterRouting) {
-    return `${providerName} → ${model.openrouterRouting.providerName} ${model.openrouterRouting.allowFallbacks ? "preferred" : "only"}`;
+    const chain = model.openrouterRouting.providerOrder
+      .map((provider) => provider.providerName)
+      .join(" → ");
+    return `${providerName} → ${chain}${model.openrouterRouting.allowFallbacks ? " → Automatic" : " only"}`;
   }
   return model.provider === "openrouter" ? `${providerName} · Automatic` : providerName;
 }
@@ -1533,7 +1646,7 @@ function subagentControl(model: RouterModel, selectedInSettings: boolean) {
     return {
       checked: false,
       disabled: true,
-      hint: "OpenRouter provider variants do not inherit subagent certification.",
+      hint: "Ordered OpenRouter routes do not inherit subagent certification.",
     };
   }
   return {

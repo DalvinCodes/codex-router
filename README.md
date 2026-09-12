@@ -1022,20 +1022,21 @@ anything else their current account catalogs expose:
 | Venice | `venice` | `https://api.venice.ai/api/v1` | [venice.ai/settings/api](https://venice.ai/settings/api) |
 | Nous Research (Hermes) | `nousresearch` | `https://inference-api.nousresearch.com/v1` | [portal.nousresearch.com](https://portal.nousresearch.com) |
 
-### Prefer a downstream OpenRouter provider
+### Set an ordered downstream OpenRouter provider chain
 
 Every registered OpenRouter chat model keeps its normal **Automatic** route.
 Expand an OpenRouter model on the Control Center's **Models** page to load the
-providers currently advertised by OpenRouter, then check only the provider
-brands that should also appear in the Codex picker. A selected brand creates a
-separate route. Choose **With fallbacks** for a route such as
-`OpenRouter → DeepInfra preferred`, or **Without fallbacks** for
-`OpenRouter → DeepInfra only`. The first prefers the brand but lets OpenRouter
-fall back when it is unavailable; the second sends only to that brand and fails
-if it cannot serve the request.
-Control Center manages those derived picker identities beneath the one base
-OpenRouter route instead of presenting duplicate route rows. Provider variants
-do not expose subagent controls because they do not inherit the base route's
+providers currently advertised by OpenRouter. Add brands to the numbered
+**Routing priority** list, then move them until priority 1, 2, 3, and so on
+match the order OpenRouter should attempt. The **Effective order** line is the
+exact request path that will be published. **Stop after this list** restricts
+the request to the numbered providers; **Continue with OpenRouter automatic**
+lets OpenRouter choose another provider only after that list is exhausted.
+
+The selected list creates one custom picker route beneath the unchanged
+Automatic route. Control Center keeps that custom identity inside the base
+model family instead of presenting duplicate route rows. The custom route does
+not expose subagent controls because it does not inherit the base route's
 subagent certification.
 
 The same workflow is available from the CLI:
@@ -1043,20 +1044,25 @@ The same workflow is available from the CLI:
 ```sh
 ./bin/control openrouter-providers list openrouter/deepseek-v4.1-flash --refresh
 ./bin/control openrouter-providers set openrouter/deepseek-v4.1-flash deepinfra,together --apply
-./bin/control openrouter-providers set openrouter/deepseek-v4.1-flash deepinfra,together --without-fallbacks=deepinfra --apply
+./bin/control openrouter-providers set openrouter/deepseek-v4.1-flash deepinfra,together --without-fallbacks --apply
 ./bin/control openrouter-providers set openrouter/deepseek-v4.1-flash none --apply
 ```
+
+The comma-separated provider order is significant: the examples try
+DeepInfra first and Together second. Without `--without-fallbacks`, OpenRouter
+may continue with its automatic provider pool after Together.
 
 Saving always validates newly selected brands against a fresh endpoint
 inventory, republishes every installed client, and restarts the routing service
 as one rollback-protected transaction. The owner-private
-`openrouter-provider-variants.json` state stores only the base model and selected
-provider identities; it never stores credentials, endpoint URLs, pricing, or
-transient health data. If a selected brand disappears temporarily, its route
-remains available and is marked as no longer advertised. Routes with fallback
-enabled can still use another provider; strict routes may fail until that
-provider returns. If the base model disappears, the selection remains inactive
-with a diagnostic until the base returns or the selection is cleared.
+`openrouter-provider-variants.json` state stores only the base model, ordered
+provider identities, and the final fallback policy; it never stores credentials,
+endpoint URLs, pricing, or transient health data. If a selected brand disappears
+temporarily, its position remains visible and materialized. A route that stops
+after the list may fail at that position; a route that continues automatically
+can still use another provider after the selected chain. If the base model
+disappears, the selection remains inactive with a diagnostic until the base
+returns or the selection is cleared.
 
 Venice API access is an entitlement, not just a key: a free Venice account has
 none. A Pro subscription (the low-rate-limit Explorer tier), a funded USD

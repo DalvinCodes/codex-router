@@ -7,8 +7,10 @@ const variant = {
   provider: "openrouter",
   openrouterRouting: {
     baseModel: "openrouter/deepseek-v4.1-flash",
-    providerSlug: "deepinfra",
-    providerName: "DeepInfra",
+    providerOrder: [
+      { providerSlug: "deepinfra", providerName: "DeepInfra" },
+      { providerSlug: "fireworks", providerName: "Fireworks" },
+    ],
     allowFallbacks: true,
   },
 };
@@ -27,7 +29,7 @@ test("an OpenRouter provider variant overrides inbound routing with preferred-wi
   };
   assert.equal(applyOpenRouterProviderRouting(payload, variant, "/chat/completions"), true);
   assert.deepEqual(payload.provider, {
-    order: ["deepinfra"],
+    order: ["deepinfra", "fireworks"],
     allow_fallbacks: true,
   });
 });
@@ -43,7 +45,7 @@ test("a strict OpenRouter provider variant overrides inbound routing without fal
     openrouterRouting: { ...variant.openrouterRouting, allowFallbacks: false },
   }, "/chat/completions"), true);
   assert.deepEqual(payload.provider, {
-    order: ["deepinfra"],
+    order: ["deepinfra", "fireworks"],
     allow_fallbacks: false,
   });
 });

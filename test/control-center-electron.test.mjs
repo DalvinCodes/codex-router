@@ -1342,10 +1342,10 @@ test("preload constructs exact positional IPC payloads", async () => {
     ["addProviderModels", ["provider", ["model-a", "model-b"]], { providerId: "provider", modelIds: ["model-a", "model-b"] }],
     [
       "setOpenRouterProviders",
-      ["openrouter/model", [{ providerSlug: "deepinfra", allowFallbacks: false }]],
+      ["openrouter/model", { providerOrder: ["deepinfra", "fireworks"], allowFallbacks: false }],
       {
         modelSlug: "openrouter/model",
-        selections: [{ providerSlug: "deepinfra", allowFallbacks: false }],
+        selection: { providerOrder: ["deepinfra", "fireworks"], allowFallbacks: false },
       },
     ],
     ["connectProvider", ["provider"], { providerId: "provider" }],
@@ -1741,12 +1741,15 @@ test("the model directory combines provider setup with de-duplicated model-famil
   assert.match(providerModelsCss, /\.pm-filter-menu-wrap\s*\{/);
   assert.match(providerModelsCss, /\.pm-filter-menu\s*\{/);
   assert.match(models, /discoverOpenRouterProviders\(modelSlug, \{ refresh \}\)/);
-  assert.match(models, /setOpenRouterProviders\(modelSlug, selections\)/);
+  assert.match(models, /setOpenRouterProviders\(modelSlug, selection\)/);
   assert.match(models, /Automatic stays available/);
+  assert.match(models, /Routing priority/);
+  assert.match(models, /Effective order/);
+  assert.match(models, /Move \$\{name\} up/);
   assert.match(models, /function displayedFamilyRoutes\(routes: RouterModel\[\]\)/);
-  assert.match(models, /OpenRouter provider variants do not inherit subagent certification/);
+  assert.match(models, /Ordered OpenRouter routes do not inherit subagent certification/);
   assert.match(models, /No longer advertised/);
-  assert.match(models, /model\.openrouterRouting\.allowFallbacks \? "preferred" : "only"/);
+  assert.match(models, /model\.openrouterRouting\.providerOrder/);
   assert.match(providerModelsCss, /\.pm-openrouter-providers\s*\{/);
   assert.doesNotMatch(providerModelsCss, /\.pm-model-layout\s*\{/);
   // The removed provider accordion must not leave its styles behind.
@@ -2085,7 +2088,7 @@ test("provider writes republish all installed targets and roll selection back on
   const setOpenRouter = source.match(/handleAction\("setOpenRouterProviders"[\s\S]*?\n  \}\);/)?.[0];
   assert.ok(setOpenRouter, "OpenRouter provider-set handler should be readable");
   assert.match(setOpenRouter, /"openrouter-providers",\s*"set",\s*model/);
-  assert.match(setOpenRouter, /--without-fallbacks=/);
+  assert.match(setOpenRouter, /"--without-fallbacks"/);
   assert.match(setOpenRouter, /typeof selection\.allowFallbacks !== "boolean"/);
   assert.match(setOpenRouter, /"--apply"/);
   assert.match(setOpenRouter, /CATALOG_MUTATION_TIMEOUT_MS/);

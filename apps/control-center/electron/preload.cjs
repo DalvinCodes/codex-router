@@ -30,8 +30,8 @@ const routerControl = Object.freeze({
   refreshAll: () => call("refreshAll"),
   setProviderEnabled: (providerId, enabled) => call("setProviderEnabled", { providerId, enabled }),
   addProviderModels: (providerId, modelIds) => call("addProviderModels", { providerId, modelIds }),
-  setOpenRouterProviders: (modelSlug, selections) =>
-    call("setOpenRouterProviders", { modelSlug, selections }),
+  setOpenRouterProviders: (modelSlug, selection) =>
+    call("setOpenRouterProviders", { modelSlug, selection }),
   connectProvider: (providerId) => call("connectProvider", { providerId }),
   saveProviderCredential: (providerId, credential) => call("saveProviderCredential", { providerId, credential }),
   removeProviderCredential: (providerId) => call("removeProviderCredential", { providerId }),

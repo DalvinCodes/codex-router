@@ -36,7 +36,7 @@ function listedModel({
 function readRegistry({ variants, userModels = [], registryPath } = {}) {
   const stateDir = mkdtempSync(path.join(os.tmpdir(), "openrouter-registry-"));
   writeFileSync(path.join(stateDir, "openrouter-provider-variants.json"), JSON.stringify({
-    version: 1,
+    version: 2,
     variants,
   }));
   writeFileSync(path.join(stateDir, "user-models.json"), JSON.stringify({
@@ -65,8 +65,7 @@ test("checked-in OpenRouter bases materialize selected routes without changing A
   const result = readRegistry({
     variants: [{
       baseModel,
-      providerSlug: "deepinfra",
-      providerName: "DeepInfra",
+      providerOrder: [{ providerSlug: "deepinfra", providerName: "DeepInfra" }],
       allowFallbacks: true,
     }],
   });
@@ -77,7 +76,10 @@ test("checked-in OpenRouter bases materialize selected routes without changing A
   assert.ok(variant);
   assert.equal(variant.upstreamModel, automatic.upstreamModel);
   assert.equal(variant.multiAgentVersion, "v1");
-  assert.equal(variant.openrouterRouting.providerSlug, "deepinfra");
+  assert.deepEqual(variant.openrouterRouting.providerOrder, [{
+    providerSlug: "deepinfra",
+    providerName: "DeepInfra",
+  }]);
 });
 
 test("user-curated OpenRouter bases can materialize provider variants", () => {
@@ -92,8 +94,7 @@ test("user-curated OpenRouter bases can materialize provider variants", () => {
     userModels: [base],
     variants: [{
       baseModel: base.slug,
-      providerSlug: "together",
-      providerName: "Together",
+      providerOrder: [{ providerSlug: "together", providerName: "Together" }],
       allowFallbacks: false,
     }],
   });
@@ -116,8 +117,7 @@ test("derived identifier collisions leave the selection inactive and diagnostic"
     userModels: [collision],
     variants: [{
       baseModel: "openrouter/deepseek-v4.1-flash",
-      providerSlug: "deepinfra",
-      providerName: "DeepInfra",
+      providerOrder: [{ providerSlug: "deepinfra", providerName: "DeepInfra" }],
       allowFallbacks: true,
     }],
   });
@@ -154,8 +154,7 @@ test("a removed base preserves inactive state and surfaces a diagnostic", () => 
     registryPath,
     variants: [{
       baseModel: missing,
-      providerSlug: "deepinfra",
-      providerName: "DeepInfra",
+      providerOrder: [{ providerSlug: "deepinfra", providerName: "DeepInfra" }],
       allowFallbacks: true,
     }],
   });

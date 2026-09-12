@@ -51,8 +51,10 @@ export interface RouterModel {
   available?: boolean;
   openrouterRouting?: {
     baseModel: string;
-    providerSlug: string;
-    providerName: string;
+    providerOrder: Array<{
+      providerSlug: string;
+      providerName: string;
+    }>;
     allowFallbacks: boolean;
   };
 }
@@ -65,18 +67,19 @@ export interface OpenRouterProviderOption {
   available: boolean;
   advertised: boolean;
   selected: boolean;
-  /** Saved policy when selected; new selections default to allowing fallbacks. */
-  allowFallbacks: boolean;
+  /** One-based position in the saved provider chain. */
+  priority?: number;
 }
 
 export interface OpenRouterProviderSelection {
-  providerSlug: string;
+  providerOrder: string[];
   allowFallbacks: boolean;
 }
 
 export interface OpenRouterProviderDiscovery {
   modelSlug: string;
   upstreamModel: string;
+  selection: OpenRouterProviderSelection;
   providers: OpenRouterProviderOption[];
   cached: boolean;
   stale: boolean;
@@ -784,7 +787,7 @@ export interface RouterControlApi {
   refreshAll(): Promise<unknown>;
   setProviderEnabled(provider: string, enabled: boolean): Promise<unknown>;
   addProviderModels(provider: string, modelIds: string[]): Promise<unknown>;
-  setOpenRouterProviders(modelSlug: string, selections: OpenRouterProviderSelection[]): Promise<unknown>;
+  setOpenRouterProviders(modelSlug: string, selection: OpenRouterProviderSelection): Promise<unknown>;
   connectProvider(provider: string): Promise<unknown>;
   saveProviderCredential(provider: string, credential: string): Promise<unknown>;
   removeProviderCredential(provider: string): Promise<unknown>;

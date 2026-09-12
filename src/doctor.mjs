@@ -1048,7 +1048,7 @@ for (const warning of RUNTIME_PROVIDER_WARNINGS) {
 for (const warning of OPENROUTER_PROVIDER_VARIANT_WARNINGS) {
   add(
     "warn",
-    "OpenRouter provider variants",
+    "OpenRouter provider routes",
     warning,
     "Restore the base model or clear its saved provider variants with bin/control openrouter-providers set <model-slug> none --apply.",
   );

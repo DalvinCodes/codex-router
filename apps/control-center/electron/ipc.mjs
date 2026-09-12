@@ -1535,45 +1535,38 @@ export function registerIpcHandlers({
     );
     return { provider: id, added: unique };
   });
-  handleAction("setOpenRouterProviders", async ({ modelSlug, selections } = {}) => {
+  handleAction("setOpenRouterProviders", async ({ modelSlug, selection } = {}) => {
     const model = await validateModel(modelSlug);
-    if (!Array.isArray(selections) || selections.length > 200) {
+    if (
+      !selection ||
+      typeof selection !== "object" ||
+      Array.isArray(selection) ||
+      Object.keys(selection).some((key) => !["providerOrder", "allowFallbacks"].includes(key))
+    ) {
+      throw new Error("OpenRouter provider selection must be an ordered chain.");
+    }
+    if (!Array.isArray(selection.providerOrder) || selection.providerOrder.length > 200) {
       throw new Error("Choose no more than 200 OpenRouter providers.");
     }
-    const normalized = selections.map((selection) => {
-      if (
-        !selection ||
-        typeof selection !== "object" ||
-        Array.isArray(selection) ||
-        Object.keys(selection).some((key) => !["providerSlug", "allowFallbacks"].includes(key)) ||
-        typeof selection.allowFallbacks !== "boolean"
-      ) {
-        throw new Error("OpenRouter provider fallback policy is invalid.");
-      }
-      return {
-        providerSlug: stringValue(
-          selection.providerSlug,
-          "OpenRouter provider",
-          OPENROUTER_PROVIDER_ID,
-        ).toLowerCase(),
-        allowFallbacks: selection.allowFallbacks,
-      };
-    });
-    const unique = new Set(normalized.map((selection) => selection.providerSlug));
-    if (unique.size !== normalized.length) {
+    if (typeof selection.allowFallbacks !== "boolean") {
+      throw new Error("OpenRouter provider chain fallback policy is invalid.");
+    }
+    const providerOrder = selection.providerOrder.map((providerSlug) => stringValue(
+      providerSlug,
+      "OpenRouter provider",
+      OPENROUTER_PROVIDER_ID,
+    ).toLowerCase());
+    const unique = new Set(providerOrder);
+    if (unique.size !== providerOrder.length) {
       throw new Error("OpenRouter provider slugs must be unique.");
     }
-    const providerSlugs = normalized.map((selection) => selection.providerSlug);
-    const strictSlugs = normalized
-      .filter((selection) => !selection.allowFallbacks)
-      .map((selection) => selection.providerSlug);
     return runJson(
       [
         "openrouter-providers",
         "set",
         model,
-        providerSlugs.length ? providerSlugs.join(",") : "none",
-        ...(strictSlugs.length ? [`--without-fallbacks=${strictSlugs.join(",")}`] : []),
+        providerOrder.length ? providerOrder.join(",") : "none",
+        ...(!selection.allowFallbacks ? ["--without-fallbacks"] : []),
         "--apply",
       ],
       { timeoutMs: CATALOG_MUTATION_TIMEOUT_MS },

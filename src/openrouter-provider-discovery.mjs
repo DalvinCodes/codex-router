@@ -230,21 +230,25 @@ function openRouterEndpointUrl(baseUrl, upstreamModel) {
 
 function selectedForBase(baseModel) {
   return readOpenRouterProviderVariants().variants
-    .filter((entry) => entry.baseModel === baseModel)
-    .map((entry) => ({ ...entry }));
+    .find((entry) => entry.baseModel === baseModel);
 }
 
 function discoveryResult({ model, providers, fetchedAt, cached, stale }) {
   const selected = selectedForBase(model.slug);
-  const selectedBySlug = new Map(selected.map((entry) => [entry.providerSlug, entry]));
+  const selectedBySlug = new Map(
+    (selected?.providerOrder || []).map((entry, index) => [entry.providerSlug, {
+      ...entry,
+      priority: index + 1,
+    }]),
+  );
   const result = providers.map((provider) => ({
     ...provider,
     advertised: true,
     selected: selectedBySlug.has(provider.slug),
-    allowFallbacks: selectedBySlug.get(provider.slug)?.allowFallbacks ?? true,
+    priority: selectedBySlug.get(provider.slug)?.priority,
   }));
   const advertised = new Set(result.map((provider) => provider.slug));
-  for (const selection of selected) {
+  for (const selection of selected?.providerOrder || []) {
     if (advertised.has(selection.providerSlug)) continue;
     result.push({
       slug: selection.providerSlug,
@@ -254,13 +258,17 @@ function discoveryResult({ model, providers, fetchedAt, cached, stale }) {
       available: false,
       advertised: false,
       selected: true,
-      allowFallbacks: selection.allowFallbacks,
+      priority: selectedBySlug.get(selection.providerSlug).priority,
     });
   }
   result.sort((left, right) => left.name.localeCompare(right.name) || left.slug.localeCompare(right.slug));
   return {
     modelSlug: model.slug,
     upstreamModel: model.upstreamModel,
+    selection: {
+      providerOrder: (selected?.providerOrder || []).map((provider) => provider.providerSlug),
+      allowFallbacks: selected?.allowFallbacks ?? true,
+    },
     providers: result,
     cached,
     stale,

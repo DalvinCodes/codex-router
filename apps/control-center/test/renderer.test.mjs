@@ -85,9 +85,8 @@ const bridgeSource = String.raw`
     displayName: "DeepSeek V4.1 Flash (OpenRouter · Old Host preferred)",
     openrouterRouting: {
       baseModel: openRouterAutomatic.slug,
-      providerSlug: "oldhost",
-      providerName: "Old Host",
-      allowFallbacks: true,
+      providerOrder: [{ providerSlug: "oldhost", providerName: "Old Host" }],
+      allowFallbacks: false,
     },
   };
   const oxProviders = [
@@ -459,9 +458,10 @@ const bridgeSource = String.raw`
       return {
         modelSlug,
         upstreamModel: "deepseek/deepseek-v4.1-flash",
+        selection: { providerOrder: ["oldhost"], allowFallbacks: false },
         providers: [
-          { slug: "deepinfra", name: "DeepInfra", endpointCount: 2, quantizations: ["fp16", "fp8"], available: true, advertised: true, selected: false, allowFallbacks: true },
-          { slug: "oldhost", name: "Old Host", endpointCount: 0, quantizations: [], available: false, advertised: false, selected: true, allowFallbacks: false },
+          { slug: "deepinfra", name: "DeepInfra", endpointCount: 2, quantizations: ["fp16", "fp8"], available: true, advertised: true, selected: false },
+          { slug: "oldhost", name: "Old Host", endpointCount: 0, quantizations: [], available: false, advertised: false, selected: true, priority: 1 },
         ],
         cached: !options?.refresh,
         stale: !options?.refresh,
@@ -472,8 +472,11 @@ const bridgeSource = String.raw`
       record("addProviderModels", providerId, [...modelIds]);
       return { ok: true };
     },
-    setOpenRouterProviders: async (modelSlug, selections) => {
-      record("setOpenRouterProviders", modelSlug, selections.map((selection) => ({ ...selection })));
+    setOpenRouterProviders: async (modelSlug, selection) => {
+      record("setOpenRouterProviders", modelSlug, {
+        providerOrder: [...selection.providerOrder],
+        allowFallbacks: selection.allowFallbacks,
+      });
       return { ok: true };
     },
     setPickerModels: async (showAll) => {
@@ -859,26 +862,27 @@ test("the production renderer exposes model discovery and picker actions", { tim
     const openRouterFamily = page.locator(".pm-family-row").filter({ hasText: "DeepSeek V4.1 Flash" });
     await openRouterFamily.waitFor();
     await openRouterFamily.locator(".pm-family-open").click();
-    await openRouterFamily.getByText("OpenRouter provider variants", { exact: true }).waitFor();
+    await openRouterFamily.getByText("OpenRouter routing order", { exact: true }).waitFor();
     await page.waitForFunction(() => window.routerControlTest.calls()
       .filter((call) => call.name === "discoverOpenRouterProviders").length >= 2);
     assert.match(await openRouterFamily.innerText(), /OpenRouter · Automatic/);
     assert.equal(await openRouterFamily.locator(".pm-route-row").count(), 0);
     assert.doesNotMatch(await openRouterFamily.innerText(), /OpenRouter → Old Host preferred/);
     assert.doesNotMatch(await openRouterFamily.innerText(), /via-oldhost/);
-    assert.match(await openRouterFamily.innerText(), /choose whether OpenRouter may fall back/);
+    assert.match(await openRouterFamily.innerText(), /tries provider #1 first/);
     const deepInfra = openRouterFamily.locator(".pm-openrouter-provider-option").filter({ hasText: "DeepInfra" });
     const oldHost = openRouterFamily.locator(".pm-openrouter-provider-option").filter({ hasText: "Old Host" });
-    assert.equal(await deepInfra.locator('input[type="checkbox"]').isChecked(), false);
-    assert.equal(await oldHost.locator('input[type="checkbox"]').isChecked(), true);
-    assert.equal(await oldHost.getByLabel("Fallback policy for Old Host").inputValue(), "without");
-    assert.match(await oldHost.innerText(), /strict route may fail/);
-    await deepInfra.locator('input[type="checkbox"]').check();
-    const deepInfraFallbacks = deepInfra.getByLabel("Fallback policy for DeepInfra");
-    assert.equal(await deepInfraFallbacks.inputValue(), "with");
-    await deepInfraFallbacks.selectOption("without");
-    await oldHost.locator('input[type="checkbox"]').uncheck();
-    await openRouterFamily.getByRole("button", { name: "Save picker variants", exact: true }).click();
+    assert.match(await oldHost.innerText(), /Priority 1/);
+    assert.match(await oldHost.innerText(), /saved priority is preserved/);
+    await deepInfra.getByRole("button", { name: "Add DeepInfra to routing order" }).click();
+    assert.match(await deepInfra.innerText(), /Priority 2/);
+    await openRouterFamily.getByRole("button", { name: "Move DeepInfra up" }).click();
+    assert.match(
+      await openRouterFamily.getByLabel("Effective OpenRouter routing order").innerText(),
+      /DeepInfra → Old Host → Stop/,
+    );
+    assert.equal(await openRouterFamily.getByLabel("Stop after this list").isChecked(), true);
+    await openRouterFamily.getByRole("button", { name: "Save provider order", exact: true }).click();
     await page.waitForFunction(() => window.routerControlTest.calls()
       .some((call) => call.name === "setOpenRouterProviders"));
     await modelSearch.fill("");
@@ -936,7 +940,7 @@ test("the production renderer exposes model discovery and picker actions", { tim
     ]);
     assert.deepEqual(calls.find((call) => call.name === "setOpenRouterProviders")?.args, [
       "openrouter/deepseek-v4.1-flash",
-      [{ providerSlug: "deepinfra", allowFallbacks: false }],
+      { providerOrder: ["deepinfra", "oldhost"], allowFallbacks: false },
     ]);
     assert.equal(calls.some((call) => call.name === "setPickerModels" && call.args[0] === true), true);
 

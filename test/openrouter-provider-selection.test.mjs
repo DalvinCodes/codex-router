@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { beforeEach, test } from "node:test";
 
 const stateDir = mkdtempSync(path.join(os.tmpdir(), "openrouter-provider-selection-"));
 process.env.CODEX_ROUTER_STATE_DIR = stateDir;
@@ -14,30 +14,50 @@ const {
   readOpenRouterProviderVariants,
   writeOpenRouterProviderVariants,
 } = await import("../src/openrouter-provider-variants.mjs");
+const { OPENROUTER_PROVIDER_VARIANTS_PATH } = await import("../src/paths.mjs");
 
 const baseModel = "openrouter/deepseek-v4.1-flash";
 
 function liveProviders() {
   return {
     modelSlug: baseModel,
-    providers: [{
-      slug: "deepinfra",
-      name: "DeepInfra",
-      endpointCount: 2,
-      quantizations: ["fp8"],
-      available: true,
-      advertised: true,
-      selected: false,
-    }],
+    selection: { providerOrder: [], allowFallbacks: true },
+    providers: [
+      {
+        slug: "deepinfra",
+        name: "DeepInfra",
+        endpointCount: 2,
+        quantizations: ["fp8"],
+        available: true,
+        advertised: true,
+        selected: false,
+      },
+      {
+        slug: "together",
+        name: "Together AI",
+        endpointCount: 1,
+        quantizations: ["fp16"],
+        available: true,
+        advertised: true,
+        selected: false,
+      },
+    ],
     cached: false,
     stale: false,
     fetchedAt: new Date().toISOString(),
   };
 }
 
-test("setOpenRouterProviders freshly validates, publishes, and selects a derived route", async () => {
+beforeEach(() => {
+  writeOpenRouterProviderVariants([]);
+});
+
+test("setOpenRouterProviders validates and persists the exact provider priority", async () => {
   const discoveries = [];
-  const result = await setOpenRouterProviders(baseModel, ["deepinfra", "deepinfra"], {
+  const result = await setOpenRouterProviders(baseModel, {
+    providerOrder: ["together", "deepinfra"],
+    allowFallbacks: true,
+  }, {
     discover: async (modelSlug, options) => {
       discoveries.push({ modelSlug, options });
       return liveProviders();
@@ -51,22 +71,29 @@ test("setOpenRouterProviders freshly validates, publishes, and selects a derived
   });
 
   assert.deepEqual(discoveries, [{ modelSlug: baseModel, options: { refresh: true } }]);
-  assert.deepEqual(result.addedRoutes, [`${baseModel}-via-deepinfra`]);
+  assert.deepEqual(result.addedRoutes, [`${baseModel}-via-together`]);
   assert.deepEqual(result.removedRoutes, []);
   assert.deepEqual(readOpenRouterProviderVariants().variants, [{
     baseModel,
-    providerSlug: "deepinfra",
-    providerName: "DeepInfra",
+    providerOrder: [
+      { providerSlug: "together", providerName: "Together AI" },
+      { providerSlug: "deepinfra", providerName: "DeepInfra" },
+    ],
     allowFallbacks: true,
   }]);
-  assert.equal(readVisibleModels().has(`${baseModel}-via-deepinfra`), true);
+  assert.equal(readVisibleModels().has(`${baseModel}-via-together`), true);
 });
 
-test("setOpenRouterProviders persists an explicit without-fallbacks policy", async () => {
-  const result = await setOpenRouterProviders(baseModel, [{
-    providerSlug: "deepinfra",
+test("setOpenRouterProviders persists one fallback policy for the whole chain", async () => {
+  writeOpenRouterProviderVariants([{
+    baseModel,
+    providerOrder: [{ providerSlug: "deepinfra", providerName: "DeepInfra" }],
+    allowFallbacks: true,
+  }]);
+  const result = await setOpenRouterProviders(baseModel, {
+    providerOrder: ["deepinfra", "together"],
     allowFallbacks: false,
-  }], {
+  }, {
     discover: async () => liveProviders(),
     transact: async ({ mutate }) => {
       await mutate();
@@ -75,35 +102,39 @@ test("setOpenRouterProviders persists an explicit without-fallbacks policy", asy
   });
   assert.deepEqual(result.addedRoutes, []);
   assert.deepEqual(result.removedRoutes, []);
-  assert.deepEqual(readOpenRouterProviderVariants().variants, [{
+  assert.deepEqual(readOpenRouterProviderVariants().variants[0], {
     baseModel,
-    providerSlug: "deepinfra",
-    providerName: "DeepInfra",
+    providerOrder: [
+      { providerSlug: "deepinfra", providerName: "DeepInfra" },
+      { providerSlug: "together", providerName: "Together AI" },
+    ],
     allowFallbacks: false,
-  }]);
+  });
 });
 
-test("setOpenRouterProviders rejects conflicting policies for one provider", async () => {
+test("setOpenRouterProviders rejects duplicate positions before discovery", async () => {
   await assert.rejects(
-    setOpenRouterProviders(baseModel, [
-      { providerSlug: "deepinfra", allowFallbacks: true },
-      { providerSlug: "deepinfra", allowFallbacks: false },
-    ], {
+    setOpenRouterProviders(baseModel, {
+      providerOrder: ["deepinfra", "deepinfra"],
+      allowFallbacks: true,
+    }, {
       discover: async () => assert.fail("invalid selections must fail before discovery"),
     }),
-    /conflicting fallback policies/,
+    /appears more than once/,
   );
 });
 
 test("setOpenRouterProviders refuses a concurrent same-model selection change", async () => {
   await assert.rejects(
-    setOpenRouterProviders(baseModel, ["deepinfra"], {
+    setOpenRouterProviders(baseModel, {
+      providerOrder: ["deepinfra"],
+      allowFallbacks: true,
+    }, {
       discover: async () => liveProviders(),
       transact: async ({ mutate }) => {
         writeOpenRouterProviderVariants([{
           baseModel,
-          providerSlug: "together",
-          providerName: "Together AI",
+          providerOrder: [{ providerSlug: "together", providerName: "Together AI" }],
           allowFallbacks: true,
         }]);
         await mutate();
@@ -113,9 +144,68 @@ test("setOpenRouterProviders refuses a concurrent same-model selection change", 
   );
 });
 
+test("reordering the primary provider replaces the picker route identity", async () => {
+  writeOpenRouterProviderVariants([{
+    baseModel,
+    providerOrder: [
+      { providerSlug: "deepinfra", providerName: "DeepInfra" },
+      { providerSlug: "together", providerName: "Together AI" },
+    ],
+    allowFallbacks: false,
+  }]);
+  const result = await setOpenRouterProviders(baseModel, {
+    providerOrder: ["together", "deepinfra"],
+    allowFallbacks: false,
+  }, {
+    discover: async () => liveProviders(),
+    transact: async ({ mutate }) => {
+      await mutate();
+      return { published: true };
+    },
+  });
+  assert.deepEqual(result.removedRoutes, [`${baseModel}-via-deepinfra`]);
+  assert.deepEqual(result.addedRoutes, [`${baseModel}-via-together`]);
+});
+
+test("legacy independent routes collapse and their extra picker state is removed", async () => {
+  writeFileSync(OPENROUTER_PROVIDER_VARIANTS_PATH, JSON.stringify({
+    version: 1,
+    variants: [
+      {
+        baseModel,
+        providerSlug: "deepinfra",
+        providerName: "DeepInfra",
+        allowFallbacks: true,
+      },
+      {
+        baseModel,
+        providerSlug: "together",
+        providerName: "Together AI",
+        allowFallbacks: true,
+      },
+    ],
+  }));
+  const result = await setOpenRouterProviders(baseModel, {
+    providerOrder: ["deepinfra", "together"],
+    allowFallbacks: true,
+  }, {
+    discover: async () => liveProviders(),
+    transact: async ({ mutate }) => {
+      await mutate();
+      return { published: true };
+    },
+  });
+  assert.deepEqual(result.addedRoutes, []);
+  assert.deepEqual(result.removedRoutes, [`${baseModel}-via-together`]);
+  assert.equal(readOpenRouterProviderVariants().sourceVersion, 2);
+});
+
 test("setOpenRouterProviders rejects an unregistered no-op but can clear an inactive base", async () => {
   await assert.rejects(
-    setOpenRouterProviders("openrouter/not-registered", [], {
+    setOpenRouterProviders("openrouter/not-registered", {
+      providerOrder: [],
+      allowFallbacks: true,
+    }, {
       modelBySlug: new Map(),
       models: [],
       transact: async () => assert.fail("an invalid no-op must not start a transaction"),
@@ -123,7 +213,15 @@ test("setOpenRouterProviders rejects an unregistered no-op but can clear an inac
     /registered OpenRouter Chat Completions base model/,
   );
 
-  const result = await setOpenRouterProviders(baseModel, [], {
+  writeOpenRouterProviderVariants([{
+    baseModel,
+    providerOrder: [{ providerSlug: "together", providerName: "Together AI" }],
+    allowFallbacks: true,
+  }]);
+  const result = await setOpenRouterProviders(baseModel, {
+    providerOrder: [],
+    allowFallbacks: true,
+  }, {
     modelBySlug: new Map(),
     models: [],
     transact: async ({ mutate }) => {
@@ -135,28 +233,19 @@ test("setOpenRouterProviders rejects an unregistered no-op but can clear an inac
   assert.deepEqual(readOpenRouterProviderVariants().variants, []);
 });
 
-test("setOpenRouterProviders restores selection state when publication fails", async () => {
+test("setOpenRouterProviders restores the ordered chain when publication fails", async () => {
   writeOpenRouterProviderVariants([{
     baseModel,
-    providerSlug: "deepinfra",
-    providerName: "DeepInfra",
+    providerOrder: [{ providerSlug: "deepinfra", providerName: "DeepInfra" }],
     allowFallbacks: true,
   }]);
   let publications = 0;
   await assert.rejects(
-    setOpenRouterProviders(baseModel, ["together"], {
-      discover: async () => ({
-        ...liveProviders(),
-        providers: [{
-          slug: "together",
-          name: "Together AI",
-          endpointCount: 1,
-          quantizations: ["fp16"],
-          available: true,
-          advertised: true,
-          selected: false,
-        }],
-      }),
+    setOpenRouterProviders(baseModel, {
+      providerOrder: ["together", "deepinfra"],
+      allowFallbacks: false,
+    }, {
+      discover: async () => liveProviders(),
       transact: (options) => transactModelOverlayMutation({
         ...options,
         lock: false,
@@ -172,8 +261,7 @@ test("setOpenRouterProviders restores selection state when publication fails", a
   assert.equal(publications, 2, "rollback republishes the restored state");
   assert.deepEqual(readOpenRouterProviderVariants().variants, [{
     baseModel,
-    providerSlug: "deepinfra",
-    providerName: "DeepInfra",
+    providerOrder: [{ providerSlug: "deepinfra", providerName: "DeepInfra" }],
     allowFallbacks: true,
   }]);
 });

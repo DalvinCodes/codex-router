@@ -1013,10 +1013,11 @@ function mergeOpenRouterProviderVariants(base) {
   const gatewayModels = new Set(models.map((model) => model.gatewayModel));
   const baseBySlug = new Map(models.map((model) => [model.slug, model]));
   for (const selection of state.variants) {
+    const providerOrder = selection.providerOrder.map((provider) => provider.providerName).join(" → ");
     const baseModel = baseBySlug.get(selection.baseModel);
     if (!baseModel) {
       warnings.push(
-        `Inactive OpenRouter provider variant ${selection.baseModel} via ${selection.providerName}: base model is unavailable.`,
+        `Inactive OpenRouter provider variant ${selection.baseModel} via ${providerOrder}: base model is unavailable.`,
       );
       continue;
     }
@@ -1025,7 +1026,7 @@ function mergeOpenRouterProviderVariants(base) {
       providerModelEndpoint(base.providers.get(baseModel.provider)) !== "/chat/completions"
     ) {
       warnings.push(
-        `Inactive OpenRouter provider variant ${selection.baseModel} via ${selection.providerName}: base model is not an OpenRouter Chat Completions route.`,
+        `Inactive OpenRouter provider variant ${selection.baseModel} via ${providerOrder}: base model is not an OpenRouter Chat Completions route.`,
       );
       continue;
     }
@@ -1038,7 +1039,7 @@ function mergeOpenRouterProviderVariants(base) {
       models.push(variant);
     } catch (error) {
       warnings.push(
-        `Inactive OpenRouter provider variant ${selection.baseModel} via ${selection.providerName}: ${error instanceof Error ? error.message : String(error)}`,
+        `Inactive OpenRouter provider variant ${selection.baseModel} via ${providerOrder}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

@@ -1104,11 +1104,10 @@ test("aggregate overview preserves safe OpenRouter variant metadata for Control 
     writeFileSync(
       path.join(stateDir, "openrouter-provider-variants.json"),
       `${JSON.stringify({
-        version: 1,
+        version: 2,
         variants: [{
           baseModel: "openrouter/deepseek-v4.1-flash",
-          providerSlug: "deepseek",
-          providerName: "DeepSeek",
+          providerOrder: [{ providerSlug: "deepseek", providerName: "DeepSeek" }],
           allowFallbacks: false,
         }],
       })}\n`,
@@ -1130,8 +1129,7 @@ test("aggregate overview preserves safe OpenRouter variant metadata for Control 
     assert.equal(automatic.openrouterRouting, undefined);
     assert.deepEqual(variant?.openrouterRouting, {
       baseModel: "openrouter/deepseek-v4.1-flash",
-      providerSlug: "deepseek",
-      providerName: "DeepSeek",
+      providerOrder: [{ providerSlug: "deepseek", providerName: "DeepSeek" }],
       allowFallbacks: false,
     });
   } finally {

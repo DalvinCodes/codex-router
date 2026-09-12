@@ -4644,21 +4644,15 @@ function curatedOpenRouterModels() {
     "utf8",
   );
   writeFileSync(variantsFile, JSON.stringify({
-    version: 1,
-    variants: [
-      {
-        baseModel: "openrouter/openai/gpt-5.3",
-        providerSlug: "deepinfra",
-        providerName: "DeepInfra",
-        allowFallbacks: true,
-      },
-      {
-        baseModel: "openrouter/openai/gpt-5.3",
-        providerSlug: "together",
-        providerName: "Together",
-        allowFallbacks: false,
-      },
-    ],
+    version: 2,
+    variants: [{
+      baseModel: "openrouter/openai/gpt-5.3",
+      providerOrder: [
+        { providerSlug: "deepinfra", providerName: "DeepInfra" },
+        { providerSlug: "together", providerName: "Together" },
+      ],
+      allowFallbacks: false,
+    }],
   }), "utf8");
   return {
     dir,
@@ -4666,8 +4660,7 @@ function curatedOpenRouterModels() {
     variantsFile,
     restricted: "openrouter-qwen-qwen3-8-max",
     unrestricted: "openrouter-openai-gpt-5-3",
-    preferred: "openrouter-openai-gpt-5-3-via-deepinfra",
-    strict: "openrouter-openai-gpt-5-3-via-together",
+    ordered: "openrouter-openai-gpt-5-3-via-deepinfra",
     strictSchema: "openrouter-vendor-strict-schema",
     ordinarySchema: "openrouter-vendor-ordinary-schema",
     embeddings: "openrouter-vendor-embedding-only",
@@ -4677,7 +4670,7 @@ function curatedOpenRouterModels() {
   };
 }
 
-test("API forwarder sends exact OpenRouter Automatic, preferred, and strict-provider bodies", async () => {
+test("API forwarder preserves Automatic and sends the exact selected OpenRouter provider order", async () => {
   const upstreamRequests = [];
   const upstream = await mockServer(async (request, response) => {
     upstreamRequests.push(await bodyJson(request));
@@ -4711,37 +4704,22 @@ test("API forwarder sends exact OpenRouter Automatic, preferred, and strict-prov
       body: JSON.stringify({ model: curated.unrestricted, ...common }),
     });
     assert.equal(automatic.status, 200, forwarder.testErrors());
-    const preferred = await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
+    const ordered = await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        model: curated.preferred,
+        model: curated.ordered,
         ...common,
         provider: { order: ["caller-choice"], allow_fallbacks: false },
       }),
     });
-    assert.equal(preferred.status, 200, forwarder.testErrors());
-    const strict = await fetch(`http://127.0.0.1:${forwarderPort}/v1/chat/completions`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model: curated.strict,
-        ...common,
-        provider: { order: ["caller-choice"], allow_fallbacks: true },
-      }),
-    });
-    assert.equal(strict.status, 200, forwarder.testErrors());
-    assert.equal(upstreamRequests.length, 3);
+    assert.equal(ordered.status, 200, forwarder.testErrors());
+    assert.equal(upstreamRequests.length, 2);
     assert.equal(upstreamRequests[0].model, "openai/gpt-5.3");
     assert.equal("provider" in upstreamRequests[0], false);
     assert.equal(upstreamRequests[1].model, "openai/gpt-5.3");
     assert.deepEqual(upstreamRequests[1].provider, {
-      order: ["deepinfra"],
-      allow_fallbacks: true,
-    });
-    assert.equal(upstreamRequests[2].model, "openai/gpt-5.3");
-    assert.deepEqual(upstreamRequests[2].provider, {
-      order: ["together"],
+      order: ["deepinfra", "together"],
       allow_fallbacks: false,
     });
     for (const request of upstreamRequests) {

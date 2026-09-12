@@ -5,6 +5,7 @@ import { forgetMultiAgentModels, MULTI_AGENT_STATE_PATH } from "./multi-agent-st
 import { providerModelEndpoint } from "./openai-endpoint-policy.mjs";
 import { discoverOpenRouterProviders } from "./openrouter-provider-discovery.mjs";
 import {
+  OPENROUTER_PROVIDER_ORDER_MAX_ENTRIES,
   OPENROUTER_PROVIDER_SLUG,
   openRouterVariantIdentity,
   readOpenRouterProviderVariants,
@@ -13,57 +14,60 @@ import {
 import { OPENROUTER_PROVIDER_VARIANTS_PATH } from "./paths.mjs";
 import { clearSubagentProof, SUBAGENT_PROOFS_PATH } from "./subagent-proofs.mjs";
 
-function normalizedProviderSelections(providerSelections) {
-  if (!Array.isArray(providerSelections)) {
-    throw new Error("OpenRouter provider selections must be an array.");
+function normalizedProviderSelection(providerSelection) {
+  if (!providerSelection || typeof providerSelection !== "object" || Array.isArray(providerSelection)) {
+    throw new Error("OpenRouter provider selection must be an ordered chain.");
   }
-  const values = [];
-  const bySlug = new Map();
-  for (const entry of providerSelections) {
-    const objectEntry = entry && typeof entry === "object" && !Array.isArray(entry);
-    if (
-      objectEntry &&
-      Object.keys(entry).some((key) => !["providerSlug", "allowFallbacks"].includes(key))
-    ) {
-      throw new Error("OpenRouter provider selection contains an unsupported field.");
-    }
-    const providerSlug = String(objectEntry ? entry.providerSlug : entry || "").trim().toLowerCase();
-    const allowFallbacks = objectEntry ? entry.allowFallbacks : true;
+  if (Object.keys(providerSelection).some((key) => !["providerOrder", "allowFallbacks"].includes(key))) {
+    throw new Error("OpenRouter provider selection contains an unsupported field.");
+  }
+  if (
+    !Array.isArray(providerSelection.providerOrder) ||
+    providerSelection.providerOrder.length > OPENROUTER_PROVIDER_ORDER_MAX_ENTRIES
+  ) {
+    throw new Error(`Choose no more than ${OPENROUTER_PROVIDER_ORDER_MAX_ENTRIES} OpenRouter providers.`);
+  }
+  if (typeof providerSelection.allowFallbacks !== "boolean") {
+    throw new Error("OpenRouter provider chain fallback policy is invalid.");
+  }
+  const providerOrder = [];
+  const seen = new Set();
+  for (const value of providerSelection.providerOrder) {
+    const providerSlug = String(value || "").trim().toLowerCase();
     if (!OPENROUTER_PROVIDER_SLUG.test(providerSlug)) {
       throw new Error("One or more OpenRouter provider slugs are invalid.");
     }
-    if (typeof allowFallbacks !== "boolean") {
-      throw new Error(`OpenRouter provider ${providerSlug} has an invalid fallback policy.`);
+    if (seen.has(providerSlug)) {
+      throw new Error(`OpenRouter provider ${providerSlug} appears more than once in the priority order.`);
     }
-    if (bySlug.has(providerSlug)) {
-      if (bySlug.get(providerSlug) !== allowFallbacks) {
-        throw new Error(`OpenRouter provider ${providerSlug} has conflicting fallback policies.`);
-      }
-      continue;
-    }
-    bySlug.set(providerSlug, allowFallbacks);
-    values.push({ providerSlug, allowFallbacks });
+    seen.add(providerSlug);
+    providerOrder.push(providerSlug);
   }
-  return values;
+  return {
+    providerOrder,
+    allowFallbacks: providerSelection.allowFallbacks,
+  };
 }
 
 function selectedStateFor(state, baseModel) {
-  return state.variants
-    .filter((entry) => entry.baseModel === baseModel)
-    .map((entry) => ({
-      baseModel: entry.baseModel,
-      providerSlug: entry.providerSlug,
-      providerName: entry.providerName,
-      allowFallbacks: entry.allowFallbacks,
-    }))
-    .sort((left, right) => left.providerSlug.localeCompare(right.providerSlug));
+  const entry = state.variants.find((candidate) => candidate.baseModel === baseModel);
+  if (!entry) return undefined;
+  return {
+    baseModel: entry.baseModel,
+    providerOrder: entry.providerOrder.map((provider) => ({ ...provider })),
+    allowFallbacks: entry.allowFallbacks,
+  };
+}
+
+function publicRouteSlug(baseModel, providerSlug) {
+  return `${baseModel}-via-${providerSlug}`;
 }
 
 // Public mutation boundary shared by the CLI and Control Center. Discovery is
 // deliberately completed before the overlay lock, while an optimistic state
 // check inside the transaction prevents a concurrent same-model selection from
 // being overwritten by choices based on an older provider list.
-export async function setOpenRouterProviders(modelSlug, providerSelections, {
+export async function setOpenRouterProviders(modelSlug, providerSelection, {
   discover = discoverOpenRouterProviders,
   models = MODELS,
   modelBySlug = MODEL_BY_SLUG,
@@ -72,15 +76,16 @@ export async function setOpenRouterProviders(modelSlug, providerSelections, {
 } = {}) {
   const normalizedModel = String(modelSlug || "").trim();
   if (!normalizedModel) throw new Error("An OpenRouter model slug is required.");
-  const requested = normalizedProviderSelections(providerSelections);
-  const requestedSlugs = requested.map((entry) => entry.providerSlug);
+  const requested = normalizedProviderSelection(providerSelection);
 
   const currentState = readOpenRouterProviderVariants(variantsPath);
   if (currentState.invalid) {
     throw new Error("OpenRouter provider variant state is invalid; refusing to overwrite it.");
   }
   const expectedState = selectedStateFor(currentState, normalizedModel);
-  const existing = new Map(expectedState.map((entry) => [entry.providerSlug, entry]));
+  const existing = new Map(
+    (expectedState?.providerOrder || []).map((entry) => [entry.providerSlug, entry]),
+  );
   const baseModel = modelBySlug.get(normalizedModel);
   const validBase = Boolean(
     baseModel &&
@@ -88,7 +93,7 @@ export async function setOpenRouterProviders(modelSlug, providerSelections, {
     !baseModel.openrouterRouting &&
     providerModelEndpoint(RUNTIME_PROVIDERS.get(baseModel.provider)) === "/chat/completions"
   );
-  if (!validBase && (requestedSlugs.length || !existing.size)) {
+  if (!validBase && (requested.providerOrder.length || !existing.size)) {
     throw new Error(
       "OpenRouter provider selection requires a registered OpenRouter Chat Completions base model.",
     );
@@ -98,7 +103,7 @@ export async function setOpenRouterProviders(modelSlug, providerSelections, {
   // but every newly named brand must appear in a fresh endpoint inventory.
   // Clearing is offline-capable so inactive state remains removable after its
   // base model disappears.
-  const discovery = requestedSlugs.length
+  const discovery = requested.providerOrder.length
     ? await discover(normalizedModel, { refresh: true })
     : undefined;
   const advertised = new Map(
@@ -106,7 +111,7 @@ export async function setOpenRouterProviders(modelSlug, providerSelections, {
       .filter((provider) => provider.advertised)
       .map((provider) => [provider.slug, provider]),
   );
-  const selections = requested.map(({ providerSlug, allowFallbacks }) => {
+  const providerOrder = requested.providerOrder.map((providerSlug) => {
     const live = advertised.get(providerSlug);
     const retained = existing.get(providerSlug);
     if (!live && !retained) {
@@ -115,36 +120,45 @@ export async function setOpenRouterProviders(modelSlug, providerSelections, {
     return {
       providerSlug,
       providerName: live?.name || retained.providerName,
-      allowFallbacks,
     };
   });
+  const selection = providerOrder.length
+    ? {
+        baseModel: normalizedModel,
+        providerOrder,
+        allowFallbacks: requested.allowFallbacks,
+      }
+    : undefined;
 
   const bySlug = new Map(models.map((model) => [model.slug, model]));
   const byGateway = new Map(models.map((model) => [model.gatewayModel, model]));
-  for (const selection of selections) {
-    const identity = openRouterVariantIdentity(baseModel, selection.providerSlug);
+  let nextRoute;
+  if (selection) {
+    nextRoute = openRouterVariantIdentity(baseModel, selection.providerOrder);
     const expectedOwner = (model) => (
       model?.openrouterRouting?.baseModel === normalizedModel &&
-      model?.openrouterRouting?.providerSlug === selection.providerSlug
+      model?.openrouterRouting?.providerOrder?.[0]?.providerSlug === providerOrder[0].providerSlug
     );
-    if (bySlug.has(identity.slug) && !expectedOwner(bySlug.get(identity.slug))) {
-      throw new Error(`Derived OpenRouter model slug collides with an existing route: ${identity.slug}`);
+    if (bySlug.has(nextRoute.slug) && !expectedOwner(bySlug.get(nextRoute.slug))) {
+      throw new Error(`Derived OpenRouter model slug collides with an existing route: ${nextRoute.slug}`);
     }
-    if (byGateway.has(identity.gatewayModel) && !expectedOwner(byGateway.get(identity.gatewayModel))) {
-      throw new Error(`Derived OpenRouter gateway model collides with an existing route: ${identity.gatewayModel}`);
+    if (byGateway.has(nextRoute.gatewayModel) && !expectedOwner(byGateway.get(nextRoute.gatewayModel))) {
+      throw new Error(`Derived OpenRouter gateway model collides with an existing route: ${nextRoute.gatewayModel}`);
     }
   }
 
-  const oldSlugs = new Map(
-    [...existing].map(([providerSlug]) => [providerSlug, `${normalizedModel}-via-${providerSlug}`]),
-  );
-  const nextSlugSet = new Set(requestedSlugs);
-  const removedRoutes = [...oldSlugs]
-    .filter(([providerSlug]) => !nextSlugSet.has(providerSlug))
-    .map(([, slug]) => slug);
-  const addedRoutes = selections
-    .filter((selection) => !existing.has(selection.providerSlug))
-    .map((selection) => openRouterVariantIdentity(baseModel, selection.providerSlug).slug);
+  const oldRoutes = currentState.sourceVersion === 1
+    ? currentState.legacyVariants
+      .filter((entry) => entry.baseModel === normalizedModel)
+      .map((entry) => publicRouteSlug(normalizedModel, entry.providerSlug))
+    : expectedState
+      ? [publicRouteSlug(normalizedModel, expectedState.providerOrder[0].providerSlug)]
+      : [];
+  const oldRouteSet = new Set(oldRoutes);
+  const nextSlug = nextRoute?.slug;
+  const removedRoutes = oldRoutes.filter((slug) => slug !== nextSlug);
+  const addedRoutes = nextSlug && !oldRouteSet.has(nextSlug) ? [nextSlug] : [];
+  const selectionChanged = JSON.stringify(expectedState) !== JSON.stringify(selection);
 
   const publication = await transact({
     files: [
@@ -159,23 +173,24 @@ export async function setOpenRouterProviders(modelSlug, providerSelections, {
         throw new Error("OpenRouter provider variant state became invalid; refusing to overwrite it.");
       }
       if (
-        JSON.stringify(selectedStateFor(lockedState, normalizedModel)) !==
-        JSON.stringify(expectedState)
+        lockedState.sourceVersion !== currentState.sourceVersion ||
+        JSON.stringify(selectedStateFor(lockedState, normalizedModel)) !== JSON.stringify(expectedState)
       ) {
         throw new Error(
           `OpenRouter provider selections for ${normalizedModel} changed while this update was pending; retry with the current inventory.`,
         );
       }
-      replaceOpenRouterProviderVariants(normalizedModel, selections, variantsPath);
+      replaceOpenRouterProviderVariants(normalizedModel, selection, variantsPath);
       if (removedRoutes.length) forgetModelVisibility(removedRoutes);
-      if (addedRoutes.length) {
-        forgetMultiAgentModels(addedRoutes);
-        for (const slug of addedRoutes) clearSubagentProof(slug);
-        setModelsVisible(addedRoutes, true);
-      }
-      if (removedRoutes.length) {
-        forgetMultiAgentModels(removedRoutes);
-        for (const slug of removedRoutes) clearSubagentProof(slug);
+      if (nextSlug) setModelsVisible([nextSlug], true);
+      const resetRoutes = [...new Set([
+        ...removedRoutes,
+        ...addedRoutes,
+        ...(selectionChanged && nextSlug ? [nextSlug] : []),
+      ])];
+      if (resetRoutes.length) {
+        forgetMultiAgentModels(resetRoutes);
+        for (const slug of resetRoutes) clearSubagentProof(slug);
       }
     },
     restart: true,
@@ -183,7 +198,12 @@ export async function setOpenRouterProviders(modelSlug, providerSelections, {
 
   return {
     modelSlug: normalizedModel,
-    selections,
+    selection: selection
+      ? {
+          providerOrder: selection.providerOrder.map((provider) => provider.providerSlug),
+          allowFallbacks: selection.allowFallbacks,
+        }
+      : { providerOrder: [], allowFallbacks: requested.allowFallbacks },
     addedRoutes,
     removedRoutes,
     publication,

@@ -135,7 +135,8 @@ test("discovery uses the documented model endpoint and the credential-isolated b
   assert.equal(result.stale, false);
   assert.equal(result.providers[0].slug, "deepinfra");
   assert.equal(result.providers[0].selected, false);
-  assert.equal(result.providers[0].allowFallbacks, true);
+  assert.equal(result.providers[0].priority, undefined);
+  assert.deepEqual(result.selection, { providerOrder: [], allowFallbacks: true });
 });
 
 test("cache entries are separated by model, base URL, and credential fingerprint and become stale after 24 hours", async () => {
@@ -183,8 +184,10 @@ test("cache entries are separated by model, base URL, and credential fingerprint
 test("refresh bypasses cache and selected withdrawn brands remain visible as unadvertised", async () => {
   writeOpenRouterProviderVariants([{
     baseModel: MODEL,
-    providerSlug: "withdrawn-host",
-    providerName: "Withdrawn Host",
+    providerOrder: [{
+      providerSlug: "withdrawn-host",
+      providerName: "Withdrawn Host",
+    }],
     allowFallbacks: false,
   }], OPENROUTER_PROVIDER_VARIANTS_PATH);
   let calls = 0;
@@ -207,6 +210,10 @@ test("refresh bypasses cache and selected withdrawn brands remain visible as una
     available: false,
     advertised: false,
     selected: true,
+    priority: 1,
+  });
+  assert.deepEqual(result.selection, {
+    providerOrder: ["withdrawn-host"],
     allowFallbacks: false,
   });
 });
